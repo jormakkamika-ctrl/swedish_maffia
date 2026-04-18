@@ -64,7 +64,7 @@ def push_to_github():
     except Exception as e:
         st.toast(f"⚠️ GitHub save skipped (non-critical): {str(e)[:100]}", icon="⚠️")
         return False
-# ====================== DATA PERSISTENCE ======================
+# ====================== DATA PERSISTENCE (SIMPLIFIED & STABLE) ======================
 def load_history():
     if os.path.exists(HISTORICAL_FILE):
         df = pd.read_csv(HISTORICAL_FILE)
@@ -78,7 +78,7 @@ def save_to_history(df, report_date):
     new_data["date"] = pd.to_datetime(report_date)
     combined = pd.concat([existing_df, new_data]).drop_duplicates(subset=["date", "industry"], keep="last")
     combined.to_csv(HISTORICAL_FILE, index=False)
-    push_to_github()
+    return combined  # return the saved df so we can offer download
 
 # ====================== ROBUST SCRAPER ======================
 def fetch_report_content(url):
@@ -151,7 +151,6 @@ if pmi:
     # Auto-save to history
     save_to_history(current_df, month_year)
 
-    # ====================== DISPLAY ======================
         # ====================== DISPLAY ======================
     st.subheader(f"Ranked Sector Performance: {month_year} (PMI® {pmi}%)")
 
@@ -180,7 +179,23 @@ if pmi:
     with st.expander("🔍 Debug: Parsed lists & scores"):
         st.write("**Growth list**:", growth)
         st.write("**Contraction list**:", contraction)
-
+    # === Download & manual GitHub save (super reliable) ===
+    st.caption("💾 Historical data is saved automatically in this app.")
+    csv_data = save_to_history(current_df, month_year).to_csv(index=False)
+    
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.download_button(
+            label="📥 Download ism_history.csv",
+            data=csv_data,
+            file_name="ism_history.csv",
+            mime="text/csv",
+        )
+    with col2:
+        st.info("To keep history forever:\n"
+                "1. Click the button above\n"
+                "2. Go to your GitHub repo → upload/replace `ism_history.csv`\n"
+                "3. Commit the change (once per month)")
         # ====================== HISTORICAL ======================
     st.divider()
     st.subheader("📈 6-Month Sector Momentum (Fixed Sector Order)")
