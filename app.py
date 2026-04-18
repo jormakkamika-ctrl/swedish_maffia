@@ -148,18 +148,28 @@ if pmi:
     save_to_history(current_df, month_year)
 
     # ====================== DISPLAY ======================
+        # ====================== DISPLAY ======================
     st.subheader(f"Ranked Sector Performance: {month_year} (PMI® {pmi}%)")
 
-    def color_scale(val):
-        if val > 0:
-            alpha = 0.4 + (val / max(n_growth, 1)) * 0.6
-            return f'background-color: rgba(0, 255, 0, {alpha:.2f}); color: black; font-weight: bold;'
-        elif val < 0:
-            alpha = 0.4 + (abs(val) / max(n_contr, 1)) * 0.6
-            return f'background-color: rgba(255, 70, 70, {alpha:.2f}); color: white; font-weight: bold;'
-        return 'background-color: #fffacd; color: black;'  # yellow for 0
+    # === NEW: Perfect diverging colors matching your historical heatmap ===
+    max_abs = max(abs(current_df["score"].max()), abs(current_df["score"].min()), 1)
+    
+    styled_df = (
+        current_df
+        .sort_values("score", ascending=False)
+        .style.background_gradient(
+            cmap="RdYlGn",          # ← same as your historical chart
+            subset=["score"],
+            vmin=-max_abs,          # force symmetric scale around zero
+            vmax=max_abs
+        )
+        .format({"score": "{:+d}"})
+        .set_properties(**{
+            "text-align": "left",
+            "font-weight": "bold"
+        })
+    )
 
-    styled_df = current_df.sort_values("score", ascending=False).style.map(color_scale, subset=['score'])
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
     # Debug (remove when happy)
