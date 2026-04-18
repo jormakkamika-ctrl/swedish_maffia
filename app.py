@@ -115,16 +115,24 @@ if pmi:
     # --- CURRENT HEATMAP DISPLAY ---
     st.subheader(f"Ranked Sector Performance: {month_year}")
     
+    # Safety check for divisors to avoid division by zero
+    max_g = max(n_growth, 1)
+    max_c = max(n_contr, 1)
+
     def color_scale(val):
         if val > 0:
-            alpha = 0.3 + (val / max(n_growth, 1)) * 0.7
-            return f'background-color: rgba(0, 255, 0, {alpha}); color: black;'
+            # Scale alpha based on ranking (0.3 to 1.0)
+            alpha = 0.3 + (val / max_g) * 0.7
+            return f'background-color: rgba(0, 255, 0, {alpha:.2f}); color: black; font-weight: bold;'
         elif val < 0:
-            alpha = 0.3 + (abs(val) / max(n_contr, 1)) * 0.7
-            return f'background-color: rgba(255, 0, 0, {alpha}); color: white;'
+            # Scale alpha based on ranking (0.3 to 1.0)
+            alpha = 0.3 + (abs(val) / max_c) * 0.7
+            return f'background-color: rgba(255, 0, 0, {alpha:.2f}); color: white; font-weight: bold;'
         return 'background-color: #1e1e1e; color: #555;'
 
-    styled_df = current_df.sort_values("score", ascending=False).style.applymap(color_scale, subset=['score'])
+    # Use .map() instead of .applymap() for newer Pandas versions
+    styled_df = current_df.sort_values("score", ascending=False).style.map(color_scale, subset=['score'])
+    
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
     # --- HISTORICAL TREND HEATMAP ---
