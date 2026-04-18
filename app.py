@@ -4,12 +4,11 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import plotly.express as px
-from datetime import datetime
 import os
 
-st.set_page_config(page_title="ISM PMI Tracker", layout="wide")
+st.set_page_config(page_title="ISM PMI Heatmap", layout="wide")
 
-# ====================== CONFIG & CONSTANTS ======================
+# ====================== CONFIG ======================
 INDUSTRIES = [
     "Food, Beverage & Tobacco Products", "Textile Mills", "Apparel, Leather & Allied Products",
     "Wood Products", "Paper Products", "Printing & Related Support Activities",
@@ -19,10 +18,10 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 HISTORICAL_FILE = "ism_history.csv"
 
-# ====================== DATA PERSISTENCE ======================
+# ====================== PERSISTENCE ======================
 def load_history():
     if os.path.exists(HISTORICAL_FILE):
         df = pd.read_csv(HISTORICAL_FILE)
@@ -32,11 +31,8 @@ def load_history():
 
 def save_to_history(df, report_date):
     existing_df = load_history()
-    # Format current data for storage
     new_data = df.copy()
     new_data["date"] = pd.to_datetime(report_date)
-    
-    # Merge and remove duplicates (prevents double-saving same month)
     combined = pd.concat([existing_df, new_data]).drop_duplicates(subset=["date", "industry"], keep="last")
     combined.to_csv(HISTORICAL_FILE, index=False)
 
@@ -44,147 +40,116 @@ def save_to_history(df, report_date):
 def fetch_report_content(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
+        # Using separator=" " prevents words from sticking together when HTML tags are removed
         text = BeautifulSoup(r.text, "html.parser").get_text(separator=" ")
 
-        # 1. PMI and Month (Standard)
         pmi_match = re.search(r"at (\d+\.\d+)%", text)
         pmi = float(pmi_match.group(1)) if pmi_match else 0.0
+
         month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
-        month_year = month_match.group(0) if month_match else "Unknown"
+        month_year = month_match.group(0) if month_match else "Unknown Month"
 
-        # 2. BETTER LIST EXTRACTION
-        # We find the broad area between "listed in order — are:" and the next major section
-        growth_list = []
-        contr_list = []
+        def get_clean_list(pattern, source):
+            match = re.search(pattern, source, re.DOTALL | re.IGNORECASE)
+            if not match: return []
+            raw = match.group(1)
+            # 1. Standardize separators
+            raw = raw.replace(" and ", "; ").replace(", ", "; ")
+            # 2. Split and clean each item aggressively
+            items = []
+            for i in raw.split(";"):
+                clean = i.strip().strip(".")
+                # Remove leading 'and ' if it survived the replace
+                clean = re.sub(r'^and\s+', '', clean, flags=re.IGNORECASE)
+                if len(clean) > 3:
+                    items.append(clean)
+            return items
 
-        growth_block = re.search(r"listed in order — are:(.*?)\. The", text, re.DOTALL | re.IGNORECASE)
-        if growth_block:
-            raw_growth = growth_block.group(1)
-            # Remove the "and" before the last item and split by semicolon or comma
-            raw_growth = raw_growth.replace(" and ", "; ")
-            growth_list = [i.strip() for i in re.split(r'[;,]', raw_growth) if len(i.strip()) > 3]
+        # Regex uses \u2014 to handle the long em-dash often used in PR Newswire
+        growth_p = r"listed in order\s*[\u2014-]\s*are:(.*?)\.\s*The"
+        contr_p = r"reporting contraction in \w+ are:(.*?)\."
 
-        contr_block = re.search(r"contraction in \w+ are:(.*?)\.", text, re.DOTALL | re.IGNORECASE)
-        if contr_block:
-            raw_contr = contr_block.group(1)
-            raw_contr = raw_contr.replace(" and ", "; ")
-            contr_list = [i.strip() for i in re.split(r'[;,]', raw_contr) if len(i.strip()) > 3]
-
-        return pmi, month_year, growth_list, contr_list, url
-    except Exception as e:
+        return pmi, month_year, get_clean_list(growth_p, text), get_clean_list(contr_p, text), url
+    except:
         return None, None, [], [], None
 
 @st.cache_data(ttl=43200)
-def get_latest_data():
-    # Primary URL (Example: March 2026 fallback provided by you)
+def get_report():
+    # March 2026 Fallback URL
     url = "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-52-7-march-2026-ism-manufacturing-pmi-report-302730721.html"
     return fetch_report_content(url)
 
-# ====================== MAIN UI ======================
+# ====================== MAIN APP ======================
 st.title("🏭 ISM Manufacturing Industry Heatmap")
-hist_df = load_history()
 
-pmi, month_year, growth, contraction, report_url = get_latest_data()
+pmi, month_year, growth, contraction, url = get_report()
 
 if pmi:
-    # --- UPDATED DYNAMIC SCORING ---
-    # --- FINAL REFINED SCORING ---
+    st.subheader(f"PMI: {pmi}% | {month_year}")
+    
+    # --- GAP-PROOF SCORING LOGIC ---
     scores = {ind: 0 for ind in INDUSTRIES}
-    matched_industries = set() # Track to prevent "stealing" ranks
+    matched_set = set()
 
-    # Helper to find the best match using word boundaries
-    def find_official_match(scraped_text):
-        scraped_clean = scraped_text.lower().strip()
-        # Remove common filler words that break matches
-        scraped_clean = re.sub(r'^(and|the|reporting)\s+', '', scraped_clean)
-        
-        for official in INDUSTRIES:
-            if official in matched_industries:
-                continue
-            
-            off_clean = official.lower()
-            # Check for exact match or significant substring match
-            if off_clean in scraped_clean or scraped_clean in off_clean:
-                return official
-        return None
-
-    # 1. Map Growth (+13 down to +1)
-    n_growth = len(growth)
+    # 1. Score Growth
+    n_g = len(growth)
     for i, scraped_name in enumerate(growth):
-        score_val = n_growth - i
-        match = find_official_match(scraped_name)
-        if match:
-            scores[match] = score_val
-            matched_industries.add(match)
+        score_val = n_g - i
+        s_clean = scraped_name.lower()
+        for official in INDUSTRIES:
+            if (official.lower() in s_clean or s_clean in official.lower()) and official not in matched_set:
+                scores[official] = score_val
+                matched_set.add(official)
+                break
 
-    # 2. Map Contraction (-3 down to -1)
-    n_contr = len(contraction)
+    # 2. Score Contraction
+    n_c = len(contraction)
     for i, scraped_name in enumerate(contraction):
-        score_val = -(n_contr - i)
-        match = find_official_match(scraped_name)
-        if match:
-            scores[match] = score_val
-            matched_industries.add(match)
+        score_val = -(n_c - i)
+        s_clean = scraped_name.lower()
+        for official in INDUSTRIES:
+            if (official.lower() in s_clean or s_clean in official.lower()) and official not in matched_set:
+                scores[official] = score_val
+                matched_set.add(official)
+                break
 
     current_df = pd.DataFrame({"industry": list(scores.keys()), "score": list(scores.values())})
-    
-    # Save automatically to history if it doesn't exist for this month
     save_to_history(current_df, month_year)
 
-    # --- CURRENT HEATMAP DISPLAY ---
-    st.subheader(f"Ranked Sector Performance: {month_year}")
-    
-    # Safety check for divisors to avoid division by zero
-    max_g = max(n_growth, 1)
-    max_c = max(n_contr, 1)
-
-    def color_scale(val):
+    # --- DISPLAY ---
+    def style_fn(val):
         if val > 0:
-            # Scale alpha based on ranking (0.3 to 1.0)
-            alpha = 0.3 + (val / max_g) * 0.7
-            return f'background-color: rgba(0, 255, 0, {alpha:.2f}); color: black; font-weight: bold;'
-        elif val < 0:
-            # Scale alpha based on ranking (0.3 to 1.0)
-            alpha = 0.3 + (abs(val) / max_c) * 0.7
-            return f'background-color: rgba(255, 0, 0, {alpha:.2f}); color: white; font-weight: bold;'
-        return 'background-color: #1e1e1e; color: #555;'
+            alpha = 0.3 + (val / max(n_g, 1)) * 0.7
+            return f'background-color: rgba(0, 200, 80, {alpha:.2f}); color: black; font-weight: bold'
+        if val < 0:
+            alpha = 0.3 + (abs(val) / max(n_c, 1)) * 0.7
+            return f'background-color: rgba(255, 70, 70, {alpha:.2f}); color: white; font-weight: bold'
+        return 'color: #555;'
 
-    # Use .map() instead of .applymap() for newer Pandas versions
-    styled_df = current_df.sort_values("score", ascending=False).style.map(color_scale, subset=['score'])
-    
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        current_df.sort_values("score", ascending=False).style.map(style_fn, subset=['score']),
+        use_container_width=True, hide_index=True
+    )
 
-    # --- HISTORICAL TREND HEATMAP ---
+    # --- HISTORICAL HEATMAP ---
     st.divider()
-    st.subheader("📈 6-Month Sector Momentum")
-    
-    full_hist = load_history()
-    if not full_hist.empty:
-        # Pivot for heatmap
-        pivot = full_hist.pivot(index="industry", columns="date", values="score").fillna(0)
-        # Sort industries by latest score
+    st.subheader("📈 Historical Trends")
+    hist_df = load_history()
+    if not hist_df.empty:
+        pivot = hist_df.pivot(index="industry", columns="date", values="score").fillna(0)
+        # Sort by latest month performance
         pivot = pivot.sort_values(by=pivot.columns[-1], ascending=False)
-        
         fig = px.imshow(
             pivot,
-            labels=dict(x="Month", y="Industry", color="Score"),
             x=pivot.columns.strftime('%b %Y'),
-            y=pivot.index,
             color_continuous_scale="RdYlGn",
             color_continuous_midpoint=0,
-            text_auto=True,
-            aspect="auto"
+            text_auto=True, aspect="auto"
         )
-        fig.update_layout(xaxis_title="", yaxis_title="")
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No history found. Refresh to start collecting data.")
 
+    with st.expander("🔍 Debug Scraper Lists"):
+        st.write(f"Growth ({len(growth)}): {growth}")
+        st.write(f"Contraction ({len(contraction)}): {contraction}")
 else:
-    st.error("Failed to load report. Check your internet connection or URL.")
-
-with st.sidebar:
-    st.write(f"**Report Link:** [Source]({report_url})")
-    if st.button("Clear Cache & Refresh"):
-        st.cache_data.clear()
-        st.rerun()
+    st.error("Could not fetch report data.")
