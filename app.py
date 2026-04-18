@@ -88,30 +88,43 @@ pmi, month_year, growth, contraction, report_url = get_latest_data()
 
 if pmi:
     # --- UPDATED DYNAMIC SCORING ---
+    # --- FINAL REFINED SCORING ---
     scores = {ind: 0 for ind in INDUSTRIES}
-    
-    # Map Growth
+    matched_industries = set() # Track to prevent "stealing" ranks
+
+    # Helper to find the best match using word boundaries
+    def find_official_match(scraped_text):
+        scraped_clean = scraped_text.lower().strip()
+        # Remove common filler words that break matches
+        scraped_clean = re.sub(r'^(and|the|reporting)\s+', '', scraped_clean)
+        
+        for official in INDUSTRIES:
+            if official in matched_industries:
+                continue
+            
+            off_clean = official.lower()
+            # Check for exact match or significant substring match
+            if off_clean in scraped_clean or scraped_clean in off_clean:
+                return official
+        return None
+
+    # 1. Map Growth (+13 down to +1)
     n_growth = len(growth)
     for i, scraped_name in enumerate(growth):
         score_val = n_growth - i
-        # Clean the scraped name of any trailing punctuation or "and"
-        clean_scraped = re.sub(r'^(and\s|&|the\s)', '', scraped_name.lower().strip())
-        for official in INDUSTRIES:
-            if official.lower() in clean_scraped or clean_scraped in official.lower():
-                scores[official] = score_val
-                break
+        match = find_official_match(scraped_name)
+        if match:
+            scores[match] = score_val
+            matched_industries.add(match)
 
-    # Map Contraction
+    # 2. Map Contraction (-3 down to -1)
     n_contr = len(contraction)
     for i, scraped_name in enumerate(contraction):
-        # We want the FIRST mentioned (worst) to be the most negative
-        # Example: 3 items -> i=0 gets -3, i=1 gets -2, i=2 gets -1
         score_val = -(n_contr - i)
-        clean_scraped = re.sub(r'^(and\s|&|the\s)', '', scraped_name.lower().strip())
-        for official in INDUSTRIES:
-            if official.lower() in clean_scraped or clean_scraped in official.lower():
-                scores[official] = score_val
-                break
+        match = find_official_match(scraped_name)
+        if match:
+            scores[match] = score_val
+            matched_industries.add(match)
 
     current_df = pd.DataFrame({"industry": list(scores.keys()), "score": list(scores.values())})
     
