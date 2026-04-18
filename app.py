@@ -8,7 +8,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="ISM PMI Heatmap", layout="wide")
 st.title("🟢 ISM Manufacturing PMI® Industry Heatmap + History")
-st.caption("Ultra-robust scraper • PR Newswire + ISM fallbacks • Historical trends")
+st.caption("Ultra-robust scraper • Exact ranked scoring (+13 to -3) • Green → Yellow → Red heatmap")
 
 # ====================== CONFIG ======================
 INDUSTRIES = [
@@ -21,66 +21,58 @@ INDUSTRIES = [
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-# ====================== SCRAPER (NOW BULLETPROOF) ======================
-@st.cache_data(ttl=43200)  # 12 hours
-def get_latest_report(force_refresh=False):
-    # --- 1. Try PR Newswire list page (most reliable source) ---
+# ====================== SCRAPER (NOW EXTREMELY ROBUST) ======================
+@st.cache_data(ttl=43200)
+def get_latest_report():
+    # 1. PR Newswire (primary - most reliable)
     try:
         r = requests.get("https://www.prnewswire.com/news/institute-for-supply-management/", 
                         headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        
-        # Regex to find the LATEST Manufacturing PMI report URL (appears first in HTML)
-        url_match = re.search(
-            r'https?://www\.prnewswire\.com/news-releases/manufacturing-pmi-at-\d+\.\d+%?[^"]*?ism-manufacturing-pmi-report-\d+\.html',
-            r.text
-        )
-        if url_match:
-            report_url = url_match.group(0)
-            st.success("✅ Latest report found via PR Newswire")
-            return fetch_report_content(report_url)
+        if r.ok:
+            match = re.search(
+                r'(https?://www\.prnewswire\.com/news-releases/manufacturing-pmi-at-\d+\.\d+.*?-ism-manufacturing-pmi-report-\d+\.html)',
+                r.text
+            )
+            if match:
+                return fetch_report_content(match.group(1))
     except:
         pass
 
-    # --- 2. Fallback: ISM official site ---
+    # 2. ISM official fallback
     try:
         r = requests.get("https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/",
                         headers=HEADERS, timeout=15)
         soup = BeautifulSoup(r.text, "html.parser")
         link = soup.find("a", string=re.compile("Past Month Manufacturing Report", re.I))
         if link and link.get("href"):
-            report_url = "https://www.ismworld.org" + link["href"] if not link["href"].startswith("http") else link["href"]
-            st.info("✅ Using ISM official fallback")
-            return fetch_report_content(report_url)
+            url = "https://www.ismworld.org" + link["href"] if not link["href"].startswith("http") else link["href"]
+            return fetch_report_content(url)
     except:
         pass
 
-    # --- 3. Ultimate fallback: try known recent URL pattern (rarely needed) ---
-    st.warning("⚠️ Using emergency fallback scraper...")
-    # You can manually add the very latest URL here if needed for a few days
-    known_latest = "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-52-7-march-2026-ism-manufacturing-pmi-report-302730721.html"
-    return fetch_report_content(known_latest)
+    # 3. Emergency fallback - REAL March 2026 URL
+    st.warning("⚠️ Using emergency fallback (real March 2026 report)")
+    real_fallback = "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-52-7-march-2026-ism-manufacturing-pmi-report-302730721.html"
+    return fetch_report_content(real_fallback)
 
 def fetch_report_content(url):
-    """Download full report and extract all needed data"""
     r = requests.get(url, headers=HEADERS, timeout=15)
-    r.raise_for_status()
     text = BeautifulSoup(r.text, "html.parser").get_text(separator=" ")
 
     # PMI
-    pmi_match = re.search(r"Manufacturing PMI® (?:registered )?at (\d+\.\d+)%", text)
+    pmi_match = re.search(r"Manufacturing PMI® .*?at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else None
 
     # Month/Year
     month_match = re.search(r"(\w+ \d{4}) ISM® Manufacturing", text)
     month_year = month_match.group(1) if month_match else "Latest Month"
 
-    # Growth list - very forgiving regex
+    # GROWTH LIST - tightened regex for exact phrasing
     growth_match = re.search(
-        r"The (\d+) manufacturing industries reporting growth in \w+.*?listed in order.*?are: (.*?)\.(?=\s+The \d+ industries|\s+The three|\s*$)",
+        r"The (\d+) manufacturing industries reporting growth in \w+.*?listed in order.*?are: (.*?)\.(?=\s*The \d+ industries reporting contraction|\s*$)",
         text, re.DOTALL | re.IGNORECASE
     )
     growth_list = []
@@ -88,9 +80,9 @@ def fetch_report_content(url):
         raw = growth_match.group(2).replace(" and ", "; ")
         growth_list = [x.strip() for x in raw.split(";") if x.strip()]
 
-    # Contraction list
+    # CONTRACTION LIST
     contr_match = re.search(
-        r"The (\d+) industries reporting contraction .*? are: (.*?)\.",
+        r"The (\d+) industries reporting contraction in \w+ are: (.*?)\.",
         text, re.DOTALL | re.IGNORECASE
     )
     contr_list = []
@@ -112,7 +104,7 @@ def load_historical():
 
 hist_df = load_historical()
 
-# ====================== UI ======================
+# ====================== MAIN APP ======================
 col1, col2 = st.columns([4, 1])
 with col1:
     st.subheader("Latest ISM Manufacturing PMI® Report")
@@ -127,32 +119,34 @@ if pmi is not None:
     st.subheader(f"**{month_year}** — Manufacturing PMI® = **{pmi}%**")
     st.caption(f"[View full official release]({url})")
 
-    # Compute scores exactly as you wanted
+    # === EXACT SCORING YOU ASKED FOR ===
     scores = {ind: 0 for ind in INDUSTRIES}
     n_growth = len(growth)
     n_contr = len(contraction)
     
     for i, ind in enumerate(growth):
         if ind in scores:
-            scores[ind] = n_growth - i
+            scores[ind] = n_growth - i          # +13 (first) down to +1
+    
     for i, ind in enumerate(contraction):
         if ind in scores:
-            scores[ind] = -(n_contr - i)
+            scores[ind] = -(n_contr - i)        # -3 (first contracting) down to -1
 
     current_df = pd.DataFrame({
         "Industry": list(scores.keys()),
         "Score": list(scores.values())
     }).sort_values("Score", ascending=False)
 
-    # Beautiful heatmap styling
+    # === PERFECT DIVERGING HEATMAP COLORS ===
     def style_score(val):
         if val > 0:
-            intensity = min(1, val / max(1, n_growth))
-            return f"background-color: rgba(0, 200, 80, {intensity}); color: black; font-weight: bold"
+            intensity = val / max(13, n_growth)
+            return f"background-color: rgba(0, 200, 80, {0.4 + 0.6*intensity}); color: black; font-weight: bold"
         elif val < 0:
-            intensity = min(1, abs(val) / max(1, n_contr))
-            return f"background-color: rgba(255, 60, 60, {intensity}); color: white; font-weight: bold"
-        return "background-color: #f0f2f6;"
+            intensity = abs(val) / max(3, n_contr)
+            return f"background-color: rgba(255, 70, 70, {0.4 + 0.6*intensity}); color: white; font-weight: bold"
+        else:
+            return "background-color: #fffacd; color: black;"  # bright yellow for unchanged
 
     styled = current_df.style.map(style_score, subset=["Score"])\
                          .format({"Score": "{:+d}"})\
@@ -160,47 +154,49 @@ if pmi is not None:
 
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    # ====================== HISTORICAL SECTION ======================
+    # Debug panel (remove later if you want)
+    with st.expander("🔍 Debug: Parsed growth / contraction lists"):
+        st.write("**Growth (should be 13)**:", growth)
+        st.write("**Contracting (should be 3)**:", contraction)
+
+    # ====================== HISTORICAL ======================
     st.divider()
     st.subheader("📈 Historical Score Trends & Color Changes")
 
-    current_date = pd.to_datetime(month_year + " 1", format="%B %Y %d", errors="coerce")  # approximate day
+    current_date = pd.to_datetime(month_year + " 1", format="%B %Y %d", errors="coerce")
     current_rows = [{"date": current_date, "pmi": pmi, "industry": ind, "score": sc} 
-                   for ind, sc in scores.items()]
+                    for ind, sc in scores.items()]
     current_hist = pd.DataFrame(current_rows)
 
     display_df = pd.concat([hist_df, current_hist]).drop_duplicates(subset=["date", "industry"])
     display_df = display_df.sort_values(["date", "score"], ascending=[False, False])
 
-    # Heatmap of all months
+    # Full history heatmap
     pivot = display_df.pivot(index="industry", columns="date", values="score").fillna(0)
     pivot = pivot.reindex(INDUSTRIES)
-
     fig_heat = px.imshow(
         pivot, labels=dict(x="Month", y="Industry", color="Score"),
-        color_continuous_scale=["red", "white", "lime"],
+        color_continuous_scale=["red", "yellow", "lime"],
         aspect="auto", text_auto=True
     )
     fig_heat.update_traces(texttemplate="%{z:+.0f}", textfont_size=10)
     st.plotly_chart(fig_heat, use_container_width=True)
 
-    # Line chart for selected industries
-    st.subheader("Score Evolution by Industry (track color changes over time)")
-    selected_ind = st.multiselect("Select industries to track", INDUSTRIES,
-                                default=["Chemical Products", "Transportation Equipment", 
-                                        "Computer & Electronic Products", "Primary Metals"])
-    if selected_ind:
-        line_df = display_df[display_df["industry"].isin(selected_ind)]
+    # Line chart
+    st.subheader("Score Evolution by Industry")
+    selected = st.multiselect("Select industries to track", INDUSTRIES, 
+                             default=["Chemical Products", "Transportation Equipment", 
+                                      "Computer & Electronic Products", "Primary Metals"])
+    if selected:
+        line_df = display_df[display_df["industry"].isin(selected)]
         fig_line = px.line(line_df, x="date", y="score", color="industry", markers=True,
-                          title="How industry rankings have shifted month-to-month")
+                           title="How rankings change month-to-month")
         st.plotly_chart(fig_line, use_container_width=True)
 
-    st.caption("✅ Green = growing (brighter = higher rank) | Red = contracting | White = unchanged\n"
-               "Add new rows to historical_data.csv after each new report for perfect history.")
+    st.caption("✅ Bright green = strongest growth | Yellow = unchanged | Red = contracting")
 
 else:
-    st.error("❌ Could not fetch the latest report from any source.")
-    st.info("The scraper tried PR Newswire + ISM official site. This is very rare. Try the Force Refresh button in a few minutes.")
+    st.error("Could not fetch report – try Force Refresh in a minute.")
 
 st.divider()
-st.caption("Built with multiple fallbacks for maximum durability • Historical tracking included")
+st.caption("Fixed & polished for you • Exact scoring + proper colors • Historical tracking")
