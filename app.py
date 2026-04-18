@@ -37,28 +37,32 @@ def normalize_name(name: str) -> str:
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
 
-# ====================== PERSISTENT GIT HISTORY ======================
+# ====================== PERSISTENT GIT HISTORY (ROBUST) ======================
 def push_to_github():
     try:
         token = st.secrets["GITHUB_TOKEN"]
         repo_name = st.secrets["GITHUB_REPO"]
         
-        # Clone if not present
+        # Clone only if needed
         if not os.path.exists(".git"):
-            git.Repo.clone_from(f"https://{token}@github.com/{repo_name}.git", ".", depth=1)
+            clone_url = f"https://{token}@github.com/{repo_name}.git"
+            git.Repo.clone_from(clone_url, ".", depth=1)
         
         repo = git.Repo(".")
         
-        # Stage and commit
+        # Stage the CSV
         repo.index.add([HISTORICAL_FILE])
-        if repo.is_dirty():
-            repo.index.commit(f"Update ISM history - {datetime.now().strftime('%Y-%m-%d')}")
+        
+        if repo.is_dirty(untracked_files=True):
+            commit_message = f"Update ISM history - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            repo.index.commit(commit_message)
             origin = repo.remote()
             origin.push()
-            st.success("✅ Historical data saved to GitHub!")
-        return True
+            st.toast("✅ History saved to GitHub!", icon="✅")
+            return True
+        return False
     except Exception as e:
-        st.warning(f"Could not push to GitHub: {e}")
+        st.toast(f"⚠️ GitHub save skipped (non-critical): {str(e)[:100]}", icon="⚠️")
         return False
 # ====================== DATA PERSISTENCE ======================
 def load_history():
