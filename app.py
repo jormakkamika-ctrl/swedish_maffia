@@ -88,26 +88,37 @@ pmi, month_year, growth, contraction, report_url = get_latest_data()
 if pmi:
     st.metric(label=f"Manufacturing PMI® ({month_year})", value=f"{pmi}%", delta=f"{pmi-50:.1f} vs Neutral")
     
-    # --- DYNAMIC SCORING ---
+    # --- DYNAMIC SCORING (STRICT RANKING) ---
+    # Initialize all to 0
     scores = {ind: 0 for ind in INDUSTRIES}
     
-    # Growth scoring: Top of list = Max points
+    # 1. Handle Growth (+N down to +1)
     n_growth = len(growth)
     for i, scraped_name in enumerate(growth):
         score_val = n_growth - i
+        scraped_clean = scraped_name.lower().strip()
         for official in INDUSTRIES:
-            if official.lower() in scraped_name.lower():
+            # Check if official name is in the scraped string or vice versa
+            if official.lower() in scraped_clean or scraped_clean in official.lower():
                 scores[official] = score_val
+                break # Move to next scraped item once matched
 
-    # Contraction scoring: Top of list (worst) = Max negative points
+    # 2. Handle Contraction (-N down to -1)
+    # Note: Using i here so the FIRST in the list is the MOST negative
     n_contr = len(contraction)
     for i, scraped_name in enumerate(contraction):
+        # If 3 industries: 0->-3, 1->-2, 2->-1
         score_val = -(n_contr - i)
+        scraped_clean = scraped_name.lower().strip()
         for official in INDUSTRIES:
-            if official.lower() in scraped_name.lower():
+            if official.lower() in scraped_clean or scraped_clean in official.lower():
                 scores[official] = score_val
+                break 
 
-    current_df = pd.DataFrame({"industry": list(scores.keys()), "score": list(scores.values())})
+    current_df = pd.DataFrame({
+        "industry": list(scores.keys()), 
+        "score": list(scores.values())
+    })
     
     # Save automatically to history if it doesn't exist for this month
     save_to_history(current_df, month_year)
