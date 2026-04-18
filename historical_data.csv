@@ -1,0 +1,55 @@
+date,pmi,industry,score
+2026-01,52.6,Food, Beverage & Tobacco Products,9
+2026-01,52.6,Textile Mills,-8
+2026-01,52.6,Apparel, Leather & Allied Products,8
+2026-01,52.6,Wood Products,-7
+2026-01,52.6,Paper Products,0
+2026-01,52.6,Printing & Related Support Activities,9
+2026-01,52.6,Petroleum & Coal Products,-5
+2026-01,52.6,Chemical Products,2
+2026-01,52.6,Plastics & Rubber Products,-3
+2026-01,52.6,Nonmetallic Mineral Products,-6
+2026-01,52.6,Primary Metals,6
+2026-01,52.6,Fabricated Metal Products,7
+2026-01,52.6,Machinery,4
+2026-01,52.6,Computer & Electronic Products,1
+2026-01,52.6,Electrical Equipment, Appliances & Components,-4
+2026-01,52.6,Transportation Equipment,5
+2026-01,52.6,Furniture & Related Products,-2
+2026-01,52.6,Miscellaneous Manufacturing,-1
+2026-02,52.4,Food, Beverage & Tobacco Products,-5
+2026-02,52.4,Textile Mills,11
+2026-02,52.4,Apparel, Leather & Allied Products,-4
+2026-02,52.4,Wood Products,-1
+2026-02,52.4,Paper Products,0
+2026-02,52.4,Printing & Related Support Activities,12
+2026-02,52.4,Petroleum & Coal Products,-3
+2026-02,52.4,Chemical Products,8
+2026-02,52.4,Plastics & Rubber Products,3
+2026-02,52.4,Nonmetallic Mineral Products,9
+2026-02,52.4,Primary Metals,10
+2026-02,52.4,Fabricated Metal Products,5
+2026-02,52.4,Machinery,7
+2026-02,52.4,Computer & Electronic Products,1
+2026-02,52.4,Electrical Equipment, Appliances & Components,6
+2026-02,52.4,Transportation Equipment,4
+2026-02,52.4,Furniture & Related Products,-2
+2026-02,52.4,Miscellaneous Manufacturing,2
+2026-03,52.7,Food, Beverage & Tobacco Products,-3
+2026-03,52.7,Textile Mills,7
+2026-03,52.7,Apparel, Leather & Allied Products,0
+2026-03,52.7,Wood Products,2
+2026-03,52.7,Paper Products,4
+2026-03,52.7,Printing & Related Support Activities,13
+2026-03,52.7,Petroleum & Coal Products,0
+2026-03,52.7,Chemical Products,1
+2026-03,52.7,Plastics & Rubber Products,-3
+2026-03,52.7,Nonmetallic Mineral Products,3
+2026-03,52.7,Primary Metals,12
+2026-03,52.7,Fabricated Metal Products,6
+2026-03,52.7,Machinery,5
+2026-03,52.7,Computer & Electronic Products,7
+2026-03,52.7,Electrical Equipment, Appliances & Components,9
+2026-03,52.7,Transportation Equipment,11
+2026-03,52.7,Furniture & Related Products,-2
+2026-03,52.7,Miscellaneous Manufacturing,10
