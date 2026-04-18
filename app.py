@@ -44,33 +44,34 @@ def save_to_history(df, report_date):
 def fetch_report_content(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-        text = soup.get_text(separator=" ")
+        text = BeautifulSoup(r.text, "html.parser").get_text(separator=" ")
 
-        # 1. Extract PMI
+        # 1. PMI and Month (Standard)
         pmi_match = re.search(r"at (\d+\.\d+)%", text)
         pmi = float(pmi_match.group(1)) if pmi_match else 0.0
-
-        # 2. Extract Month/Year
         month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
         month_year = month_match.group(0) if month_match else "Unknown"
 
-        # 3. List Extraction Function
-        def get_industry_list(pattern, source):
-            match = re.search(pattern, source, re.DOTALL | re.IGNORECASE)
-            if not match: return []
-            items = match.group(1).replace(" and ", ", ")
-            return [i.strip() for i in re.split(r'[;,]', items) if len(i.strip()) > 3]
+        # 2. BETTER LIST EXTRACTION
+        # We find the broad area between "listed in order — are:" and the next major section
+        growth_list = []
+        contr_list = []
 
-        growth_pattern = r"industries reporting growth in .*? are: (.*?)\.(?= The| \w+ industries|$)"
-        contr_pattern = r"industries reporting contraction in .*? are: (.*?)\.(?= The| \w+ industries|$)"
+        growth_block = re.search(r"listed in order — are:(.*?)\. The", text, re.DOTALL | re.IGNORECASE)
+        if growth_block:
+            raw_growth = growth_block.group(1)
+            # Remove the "and" before the last item and split by semicolon or comma
+            raw_growth = raw_growth.replace(" and ", "; ")
+            growth_list = [i.strip() for i in re.split(r'[;,]', raw_growth) if len(i.strip()) > 3]
 
-        growth_list = get_industry_list(growth_pattern, text)
-        contr_list = get_industry_list(contr_pattern, text)
+        contr_block = re.search(r"contraction in \w+ are:(.*?)\.", text, re.DOTALL | re.IGNORECASE)
+        if contr_block:
+            raw_contr = contr_block.group(1)
+            raw_contr = raw_contr.replace(" and ", "; ")
+            contr_list = [i.strip() for i in re.split(r'[;,]', raw_contr) if len(i.strip()) > 3]
 
         return pmi, month_year, growth_list, contr_list, url
     except Exception as e:
-        st.error(f"Scraping Error: {e}")
         return None, None, [], [], None
 
 @st.cache_data(ttl=43200)
@@ -86,39 +87,33 @@ hist_df = load_history()
 pmi, month_year, growth, contraction, report_url = get_latest_data()
 
 if pmi:
-    st.metric(label=f"Manufacturing PMI® ({month_year})", value=f"{pmi}%", delta=f"{pmi-50:.1f} vs Neutral")
-    
-    # --- DYNAMIC SCORING (STRICT RANKING) ---
-    # Initialize all to 0
+    # --- UPDATED DYNAMIC SCORING ---
     scores = {ind: 0 for ind in INDUSTRIES}
     
-    # 1. Handle Growth (+N down to +1)
+    # Map Growth
     n_growth = len(growth)
     for i, scraped_name in enumerate(growth):
         score_val = n_growth - i
-        scraped_clean = scraped_name.lower().strip()
+        # Clean the scraped name of any trailing punctuation or "and"
+        clean_scraped = re.sub(r'^(and\s|&|the\s)', '', scraped_name.lower().strip())
         for official in INDUSTRIES:
-            # Check if official name is in the scraped string or vice versa
-            if official.lower() in scraped_clean or scraped_clean in official.lower():
+            if official.lower() in clean_scraped or clean_scraped in official.lower():
                 scores[official] = score_val
-                break # Move to next scraped item once matched
+                break
 
-    # 2. Handle Contraction (-N down to -1)
-    # Note: Using i here so the FIRST in the list is the MOST negative
+    # Map Contraction
     n_contr = len(contraction)
     for i, scraped_name in enumerate(contraction):
-        # If 3 industries: 0->-3, 1->-2, 2->-1
+        # We want the FIRST mentioned (worst) to be the most negative
+        # Example: 3 items -> i=0 gets -3, i=1 gets -2, i=2 gets -1
         score_val = -(n_contr - i)
-        scraped_clean = scraped_name.lower().strip()
+        clean_scraped = re.sub(r'^(and\s|&|the\s)', '', scraped_name.lower().strip())
         for official in INDUSTRIES:
-            if official.lower() in scraped_clean or scraped_clean in official.lower():
+            if official.lower() in clean_scraped or clean_scraped in official.lower():
                 scores[official] = score_val
-                break 
+                break
 
-    current_df = pd.DataFrame({
-        "industry": list(scores.keys()), 
-        "score": list(scores.values())
-    })
+    current_df = pd.DataFrame({"industry": list(scores.keys()), "score": list(scores.values())})
     
     # Save automatically to history if it doesn't exist for this month
     save_to_history(current_df, month_year)
