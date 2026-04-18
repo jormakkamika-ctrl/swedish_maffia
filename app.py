@@ -181,28 +181,37 @@ if pmi:
         st.write("**Growth list**:", growth)
         st.write("**Contraction list**:", contraction)
 
-    # ====================== HISTORICAL ======================
+        # ====================== HISTORICAL ======================
     st.divider()
-    st.subheader("📈 6-Month Sector Momentum")
+    st.subheader("📈 6-Month Sector Momentum (Fixed Sector Order)")
 
     full_hist = load_history()
     if not full_hist.empty:
+        # Create pivot
         pivot = full_hist.pivot(index="industry", columns="date", values="score").fillna(0)
-        pivot = pivot.sort_values(by=pivot.columns[-1], ascending=False)
+        
+        # === KEY FIX: Keep sectors in FIXED order (never moves) ===
+        pivot = pivot.reindex(INDUSTRIES)          # ← this locks the row order
+        
+        # Optional: rename columns to short month names (cleaner)
+        pivot.columns = pivot.columns.strftime('%b %Y')
+        
         fig = px.imshow(
             pivot,
             labels=dict(x="Month", y="Industry", color="Score"),
-            x=pivot.columns.strftime('%b %Y'),
-            y=pivot.index,
-            color_continuous_scale="RdYlGn",
+            color_continuous_scale="RdYlGn",      # same beautiful green-yellow-red
             color_continuous_midpoint=0,
-            text_auto=True,
+            text_auto=True,                       # shows the actual score number
             aspect="auto"
         )
-        fig.update_layout(xaxis_title="", yaxis_title="")
+        fig.update_layout(
+            xaxis_title="",
+            yaxis_title="",
+            height=600
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No history yet — refresh to start collecting data.")
+        st.info("No history yet — refresh after the next ISM report drops.")
 
 else:
     st.error("Failed to load report.")
