@@ -6,6 +6,8 @@ import re
 import plotly.express as px
 from datetime import datetime
 import os
+import git
+import shutil
 
 st.set_page_config(page_title="ISM PMI Tracker", layout="wide")
 
@@ -34,6 +36,30 @@ def normalize_name(name: str) -> str:
 # Lookup dict: normalized → original official name
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
+
+# ====================== PERSISTENT GIT HISTORY ======================
+def push_to_github():
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+        repo_name = st.secrets["GITHUB_REPO"]
+        
+        # Clone if not present
+        if not os.path.exists(".git"):
+            git.Repo.clone_from(f"https://{token}@github.com/{repo_name}.git", ".", depth=1)
+        
+        repo = git.Repo(".")
+        
+        # Stage and commit
+        repo.index.add([HISTORICAL_FILE])
+        if repo.is_dirty():
+            repo.index.commit(f"Update ISM history - {datetime.now().strftime('%Y-%m-%d')}")
+            origin = repo.remote()
+            origin.push()
+            st.success("✅ Historical data saved to GitHub!")
+        return True
+    except Exception as e:
+        st.warning(f"Could not push to GitHub: {e}")
+        return False
 # ====================== DATA PERSISTENCE ======================
 def load_history():
     if os.path.exists(HISTORICAL_FILE):
@@ -48,6 +74,7 @@ def save_to_history(df, report_date):
     new_data["date"] = pd.to_datetime(report_date)
     combined = pd.concat([existing_df, new_data]).drop_duplicates(subset=["date", "industry"], keep="last")
     combined.to_csv(HISTORICAL_FILE, index=False)
+    push_to_github()
 
 # ====================== ROBUST SCRAPER ======================
 def fetch_report_content(url):
