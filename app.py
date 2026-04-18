@@ -22,6 +22,18 @@ INDUSTRIES = [
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 HISTORICAL_FILE = "ism_history.csv"
 
+# ====================== NAME NORMALIZATION (FIXES SKIPPING) ======================
+def normalize_name(name: str) -> str:
+    """Normalise for reliable matching"""
+    name = name.lower().strip()
+    name = name.replace("&", "and")          # & → and
+    name = re.sub(r'[^a-z0-9\s]', '', name)  # remove all punctuation
+    name = re.sub(r'\s+', ' ', name)         # collapse spaces
+    return name
+
+# Lookup dict: normalized → original official name
+NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
+
 # ====================== DATA PERSISTENCE ======================
 def load_history():
     if os.path.exists(HISTORICAL_FILE):
@@ -32,11 +44,8 @@ def load_history():
 
 def save_to_history(df, report_date):
     existing_df = load_history()
-    # Format current data for storage
     new_data = df.copy()
     new_data["date"] = pd.to_datetime(report_date)
-    
-    # Merge and remove duplicates (prevents double-saving same month)
     combined = pd.concat([existing_df, new_data]).drop_duplicates(subset=["date", "industry"], keep="last")
     combined.to_csv(HISTORICAL_FILE, index=False)
 
@@ -46,112 +55,99 @@ def fetch_report_content(url):
         r = requests.get(url, headers=HEADERS, timeout=15)
         text = BeautifulSoup(r.text, "html.parser").get_text(separator=" ")
 
-        # 1. PMI and Month (Standard)
-        pmi_match = re.search(r"at (\d+\.\d+)%", text)
+        # PMI + Month
+        pmi_match = re.search(r"Manufacturing PMI® .*?at (\d+\.\d+)%", text)
         pmi = float(pmi_match.group(1)) if pmi_match else 0.0
-        month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
-        month_year = month_match.group(0) if month_match else "Unknown"
 
-        # 2. BETTER LIST EXTRACTION
-        # We find the broad area between "listed in order — are:" and the next major section
-        growth_list = []
-        contr_list = []
+        month_match = re.search(r"(\w+ \d{4}) ISM® Manufacturing", text)
+        month_year = month_match.group(1) if month_match else "Unknown"
 
+        # === GROWTH LIST (robust split) ===
         growth_block = re.search(r"listed in order — are:(.*?)\. The", text, re.DOTALL | re.IGNORECASE)
+        growth_list = []
         if growth_block:
-            raw_growth = growth_block.group(1)
-            # Remove the "and" before the last item and split by semicolon or comma
-            raw_growth = raw_growth.replace(" and ", "; ")
-            growth_list = [i.strip() for i in re.split(r'[;,]', raw_growth) if len(i.strip()) > 3]
+            raw = growth_block.group(1).replace(" and ", "; ")
+            items = [x.strip() for x in raw.split(";") if x.strip()]
+            growth_list = [x for x in items if len(x) > 3]
 
+        # === CONTRACTION LIST ===
         contr_block = re.search(r"contraction in \w+ are:(.*?)\.", text, re.DOTALL | re.IGNORECASE)
+        contraction_list = []
         if contr_block:
-            raw_contr = contr_block.group(1)
-            raw_contr = raw_contr.replace(" and ", "; ")
-            contr_list = [i.strip() for i in re.split(r'[;,]', raw_contr) if len(i.strip()) > 3]
+            raw = contr_block.group(1).replace(" and ", "; ")
+            items = [x.strip() for x in raw.split(";") if x.strip()]
+            contraction_list = [x for x in items if len(x) > 3]
 
-        return pmi, month_year, growth_list, contr_list, url
-    except Exception as e:
+        return pmi, month_year, growth_list, contraction_list, url
+
+    except Exception:
         return None, None, [], [], None
 
 @st.cache_data(ttl=43200)
 def get_latest_data():
-    # Primary URL (Example: March 2026 fallback provided by you)
+    # You can keep your fallback URL or change to the real latest one
     url = "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-52-7-march-2026-ism-manufacturing-pmi-report-302730721.html"
     return fetch_report_content(url)
 
 # ====================== MAIN UI ======================
 st.title("🏭 ISM Manufacturing Industry Heatmap")
-hist_df = load_history()
 
+hist_df = load_history()
 pmi, month_year, growth, contraction, report_url = get_latest_data()
 
 if pmi:
-    # --- UPDATED DYNAMIC SCORING ---
+    # ====================== EXACT SCORING (NO MORE SKIPPING) ======================
     scores = {ind: 0 for ind in INDUSTRIES}
-    
-    # Map Growth
     n_growth = len(growth)
-    for i, scraped_name in enumerate(growth):
-        score_val = n_growth - i
-        # Clean the scraped name of any trailing punctuation or "and"
-        clean_scraped = re.sub(r'^(and\s|&|the\s)', '', scraped_name.lower().strip())
-        for official in INDUSTRIES:
-            if official.lower() in clean_scraped or clean_scraped in official.lower():
-                scores[official] = score_val
-                break
-
-    # Map Contraction
     n_contr = len(contraction)
-    for i, scraped_name in enumerate(contraction):
-        # We want the FIRST mentioned (worst) to be the most negative
-        # Example: 3 items -> i=0 gets -3, i=1 gets -2, i=2 gets -1
-        score_val = -(n_contr - i)
-        clean_scraped = re.sub(r'^(and\s|&|the\s)', '', scraped_name.lower().strip())
-        for official in INDUSTRIES:
-            if official.lower() in clean_scraped or clean_scraped in official.lower():
-                scores[official] = score_val
-                break
+
+    # Growth: +13 → +1
+    for i, scraped in enumerate(growth):
+        norm = normalize_name(scraped)
+        if norm in NORM_TO_OFFICIAL:
+            official = NORM_TO_OFFICIAL[norm]
+            scores[official] = n_growth - i
+
+    # Contraction: -3 → -1
+    for i, scraped in enumerate(contraction):
+        norm = normalize_name(scraped)
+        if norm in NORM_TO_OFFICIAL:
+            official = NORM_TO_OFFICIAL[norm]
+            scores[official] = -(n_contr - i)
 
     current_df = pd.DataFrame({"industry": list(scores.keys()), "score": list(scores.values())})
-    
-    # Save automatically to history if it doesn't exist for this month
+
+    # Auto-save to history
     save_to_history(current_df, month_year)
 
-    # --- CURRENT HEATMAP DISPLAY ---
-    st.subheader(f"Ranked Sector Performance: {month_year}")
-    
-    # Safety check for divisors to avoid division by zero
-    max_g = max(n_growth, 1)
-    max_c = max(n_contr, 1)
+    # ====================== DISPLAY ======================
+    st.subheader(f"Ranked Sector Performance: {month_year} (PMI® {pmi}%)")
 
     def color_scale(val):
         if val > 0:
-            # Scale alpha based on ranking (0.3 to 1.0)
-            alpha = 0.3 + (val / max_g) * 0.7
+            alpha = 0.4 + (val / max(n_growth, 1)) * 0.6
             return f'background-color: rgba(0, 255, 0, {alpha:.2f}); color: black; font-weight: bold;'
         elif val < 0:
-            # Scale alpha based on ranking (0.3 to 1.0)
-            alpha = 0.3 + (abs(val) / max_c) * 0.7
-            return f'background-color: rgba(255, 0, 0, {alpha:.2f}); color: white; font-weight: bold;'
-        return 'background-color: #1e1e1e; color: #555;'
+            alpha = 0.4 + (abs(val) / max(n_contr, 1)) * 0.6
+            return f'background-color: rgba(255, 70, 70, {alpha:.2f}); color: white; font-weight: bold;'
+        return 'background-color: #fffacd; color: black;'  # yellow for 0
 
-    # Use .map() instead of .applymap() for newer Pandas versions
     styled_df = current_df.sort_values("score", ascending=False).style.map(color_scale, subset=['score'])
-    
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-    # --- HISTORICAL TREND HEATMAP ---
+    # Debug (remove when happy)
+    with st.expander("🔍 Debug: Parsed lists & scores"):
+        st.write("**Growth list**:", growth)
+        st.write("**Contraction list**:", contraction)
+
+    # ====================== HISTORICAL ======================
     st.divider()
     st.subheader("📈 6-Month Sector Momentum")
-    
+
     full_hist = load_history()
     if not full_hist.empty:
-        # Pivot for heatmap
         pivot = full_hist.pivot(index="industry", columns="date", values="score").fillna(0)
-        # Sort industries by latest score
         pivot = pivot.sort_values(by=pivot.columns[-1], ascending=False)
-        
         fig = px.imshow(
             pivot,
             labels=dict(x="Month", y="Industry", color="Score"),
@@ -165,10 +161,10 @@ if pmi:
         fig.update_layout(xaxis_title="", yaxis_title="")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No history found. Refresh to start collecting data.")
+        st.info("No history yet — refresh to start collecting data.")
 
 else:
-    st.error("Failed to load report. Check your internet connection or URL.")
+    st.error("Failed to load report.")
 
 with st.sidebar:
     st.write(f"**Report Link:** [Source]({report_url})")
