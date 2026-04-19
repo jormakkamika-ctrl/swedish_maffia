@@ -55,12 +55,14 @@ def parse_report_text(text):
     def get_list(pattern, src):
         match = re.search(pattern, src, re.DOTALL | re.IGNORECASE)
         if not match: return []
+        # Clean up the block before splitting
         raw = match.group(1).replace(" and ", "; ")
+        # Split by semicolon and remove any leftover 'in order' text or periods
         return [x.strip().strip('.') for x in raw.split(";") if len(x.strip()) > 3]
 
-    # Specific ISM delimiters
-    growth_p = r"listed in order\s*[\u2014-]\s*are:(.*?)\.\s*The"
-    contr_p = r"contraction in \w+ are:(.*?)\."
+    # Updated Patterns for Historical Consistency
+    growth_p = r"reporting growth in \w+.*?\s+are:(.*?)\.\s*The"
+    contr_p = r"reporting contraction in \w+.*?\s+are:(.*?)\."
     
     return pmi, month_year, get_list(growth_p, text), get_list(contr_p, text)
 
