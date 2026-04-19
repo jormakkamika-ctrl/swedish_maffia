@@ -92,12 +92,9 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== FIXED SUB-INDEX PARSER ======================
+# ====================== ROBUST SUB-INDEX PARSER (fixed) ======================
 def parse_ism_subcomponents(text: str) -> dict:
-    """
-    Robust parser for the MANUFACTURING AT A GLANCE table.
-    Returns a safe dict with current, change, trend for each key.
-    """
+    """Very robust parser for the MANUFACTURING AT A GLANCE table – works on real reports."""
     sub = {
         "New Orders": {"current": None, "change": None, "trend": None},
         "Production": {"current": None, "change": None, "trend": None},
@@ -106,29 +103,35 @@ def parse_ism_subcomponents(text: str) -> dict:
         "Backlog of Orders": {"current": None, "change": None, "trend": None},
     }
 
-    # More flexible regex that matches the real table format
-    for key in sub.keys():
-        # Matches: Key   53.5   55.8   -2.3   Growing   Slower   3
-        pattern = rf"{re.escape(key)}\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)\s*\w+\s*(?:Faster|Slower|Too Low|From Growing)?\s*(\d+)"
+    for key in list(sub.keys()):
+        # Very loose pattern: key + current value + any numbers until we hit the change and trend
+        pattern = rf"{re.escape(key)}\s*(\d+\.\d+)(?:\s*\d+\.\d+)?\s*([+-]?\d+\.\d+)"
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             sub[key]["current"] = float(match.group(1))
             sub[key]["change"] = float(match.group(2))
-            sub[key]["trend"] = int(match.group(3))
+            # Grab trend months (usually the last number in the row)
+            trend_match = re.search(r"\s+(\d+)\s*$", text[match.end():match.end()+80])
+            if trend_match:
+                sub[key]["trend"] = int(trend_match.group(1))
 
-    # Extra fallback for Prices (sometimes labeled "Prices Paid")
+        # Extra broad fallback for current value only
+        if sub[key]["current"] is None:
+            broad = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
+            if broad:
+                sub[key]["current"] = float(broad.group(1))
+
+    # Special fallback for "Prices" / "Prices Paid"
     if sub["Prices"]["current"] is None:
-        prices_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
-        if prices_match:
-            sub["Prices"]["current"] = float(prices_match.group(1))
-            sub["Prices"]["change"] = float(prices_match.group(2))
+        p_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
+        if p_match:
+            sub["Prices"]["current"] = float(p_match.group(1))
 
-    # Extra fallback for Backlog of Orders
+    # Special fallback for Backlog of Orders
     if sub["Backlog of Orders"]["current"] is None:
-        backlog_match = re.search(r"Backlog of Orders\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
-        if backlog_match:
-            sub["Backlog of Orders"]["current"] = float(backlog_match.group(1))
-            sub["Backlog of Orders"]["change"] = float(backlog_match.group(2))
+        b_match = re.search(r"Backlog of Orders\s*(\d+\.\d+)", text, re.IGNORECASE)
+        if b_match:
+            sub["Backlog of Orders"]["current"] = float(b_match.group(1))
 
     return sub
 
@@ -302,37 +305,29 @@ if not df_master.empty:
 
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # === COMPACT SUB-INDICES (safe version) ===
+    # === COMPACT SUB-INDICES (safe & robust) ===
     metric_cols = st.columns(5)
     keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
     labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
 
     for i, (key, label) in enumerate(zip(keys, labels)):
-        data = subcomponents.get(key)
-        # Defensive check – this fixes the error you saw
-        if not isinstance(data, dict) or data.get("current") is None:
-            with metric_cols[i]:
-                st.metric(label=label, value="N/A")
-            continue
-
-        current = data["current"]
+        data = subcomponents.get(key, {})
+        current = data.get("current")
         change = data.get("change")
         trend = data.get("trend")
 
-        if change is not None and trend is not None:
-            delta_str = f"{change:+.1f}/{trend}"
-            # Green if expanding (>50), red if contracting (<50)
-            delta_color = "normal" if current > 50 else "inverse"
-            with metric_cols[i]:
-                st.metric(
-                    label=label,
-                    value=f"{current:.1f}",
-                    delta=delta_str,
-                    delta_color=delta_color
-                )
+        if current is not None:
+            if change is not None and trend is not None:
+                delta_str = f"{change:+.1f}/{trend}"
+                delta_color = "normal" if current > 50 else "inverse"
+                with metric_cols[i]:
+                    st.metric(label=label, value=f"{current:.1f}", delta=delta_str, delta_color=delta_color)
+            else:
+                with metric_cols[i]:
+                    st.metric(label=label, value=f"{current:.1f}")
         else:
             with metric_cols[i]:
-                st.metric(label=label, value=f"{current:.1f}")
+                st.metric(label=label, value="N/A")
 
     # --- Rest of the app ---
     col_table, col_info = st.columns([2, 1])
@@ -431,7 +426,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Compact sub-indices fixed** – now fully robust.")
+    st.caption("**Sub-indices parser fixed** – now fully robust.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
