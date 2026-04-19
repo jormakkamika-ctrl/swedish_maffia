@@ -19,7 +19,7 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# PURE Yahoo Finance industry strings (exact matches from ticker.info['industry'])
+# PURE Yahoo Finance industry strings (kept for backward compatibility)
 ISM_TO_YAHOO_INDUSTRIES = {
     "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
     "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", 
@@ -96,83 +96,99 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
+# ====================== ENHANCED ISM SUB-INDEX PARSER (Step 1) ======================
+def parse_ism_subcomponents(text: str) -> dict:
+    """
+    Extracts the key sub-indices from the 'MANUFACTURING AT A GLANCE' section.
+    This is the foundation for a professional macro-to-equity scoring model.
+    """
+    sub = {
+        "New Orders": None,
+        "Production": None,
+        "Employment": None,
+        "Supplier Deliveries": None,
+        "Prices": None,
+        "Backlog of Orders": None,
+        "Inventories": None,
+    }
+
+    # Robust patterns that work on real PR Newswire reports (March 2026 format)
+    for key in sub.keys():
+        # Matches "New Orders 52.3 Growth 0.5" or similar
+        pattern = rf"{key}\s*(\d+\.\d+)"
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            sub[key] = float(match.group(1))
+
+    # Fallback for "Prices Paid" (sometimes labeled "Prices")
+    if sub["Prices"] is None:
+        prices_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
+        if prices_match:
+            sub["Prices"] = float(prices_match.group(1))
+
+    return sub
+
+
+# ====================== STOCK FETCHER (FULL NYSE + NASDAQ) ======================
 @st.cache_data(ttl=86400)
 def get_all_nyse_nasdaq_tickers():
-    # Use a curated list of liquid tickers to ensure the scan actually finishes
-    # This list covers 99% of companies >$1B Market Cap
-    url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all/all_tickers.txt"
-    try:
-        res = requests.get(url)
-        all_t = res.text.split('\n')
-        # Filter out tiny tickers/warrants
-        return [t.strip() for t in all_t if len(t.strip()) <= 4 and t.strip().isalpha()][:2000]
-    except:
-        return ["XOM", "CVX", "SHEL", "TTE", "COP", "BP", "PBR", "EQNR", "VLO", "PSX"] # Fallback
+    tickers = set()
+    urls = [
+        "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/nasdaqtraded.txt",
+        "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/otherlisted.txt"
+    ]
+    for url in urls:
+        try:
+            df = pd.read_csv(url, sep='|', on_bad_lines='skip')
+            if 'ETF' in df.columns:
+                df = df[df['ETF'] == 'N']
+            symbol_col = 'Symbol' if 'Symbol' in df.columns else df.columns[0]
+            clean = df[symbol_col].astype(str).str.strip()
+            clean = clean[~clean.str.contains(r'[\.\^]', regex=True)]
+            tickers.update(clean.tolist())
+        except Exception:
+            continue
+    return sorted(list(tickers))
 
 
-# ====================== UPDATED STOCK FETCHER ======================
 @st.cache_data(ttl=3600)
 def fetch_stocks_in_industries(selected_industries: tuple):
-    """
-    Robust scan using an iterative approach to prevent Yahoo Finance API timeouts.
-    """
     if not selected_industries:
         return pd.DataFrame()
-
-    # Get the ticker universe
-    full_universe = get_all_nyse_nasdaq_tickers()
-    
-    # To keep performance acceptable, we focus on the top 1500 most liquid 
-    # as >$1B MC stocks are almost exclusively in this group.
-    # We use yf.download to get Market Cap data for batches.
-    
+    tickers_list = get_all_nyse_nasdaq_tickers()
+    tickers_obj = yf.Tickers(" ".join(tickers_list))
     rows = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    # We process in smaller batches of 100 to avoid API rejection
-    batch_size = 100
-    for i in range(0, len(full_universe), batch_size):
-        batch = full_universe[i : i + batch_size]
-        percent = min(100, int((i / len(full_universe)) * 100))
-        progress_bar.progress(percent)
-        status_text.text(f"Scanning Tickers {i} to {i+batch_size} of {len(full_universe)}...")
-        
-        # We must use Ticker(sym).info for industry matching, but we limit 
-        # calls to avoid being blocked.
-        for sym in batch:
-            try:
-                t = yf.Ticker(sym)
-                # fast_info is quicker than .info for basic metrics
-                info = t.info 
-                
-                industry = info.get("industry", "")
-                market_cap = info.get("marketCap", 0)
-                
-                # Matching Logic
-                if not industry: continue
-                
-                match = any(y.lower() in industry.lower() for y in selected_industries)
-                
-                if match and market_cap > 1_000_000_000:
-                    rows.append({
-                        "Ticker": sym,
-                        "Company": info.get("longName", sym),
-                        "Yahoo Industry": industry,
-                        "Market Cap": market_cap,
-                        "Price": f"${info.get('currentPrice', 0):.2f}",
-                        "Forward P/E": info.get("forwardPE", "N/A")
-                    })
-            except Exception:
+    for sym in tickers_list:
+        try:
+            info = tickers_obj.tickers.get(sym)
+            if not info:
                 continue
-                
-        # Early exit if we found a good amount of stocks to save time
-        if len(rows) > 100: 
-            break
+            info = info.info
+            industry = info.get("industry", "") or ""
+            market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
+            exchange = (info.get("exchange", "") or "").upper()
+            company_name = info.get("longName") or info.get("shortName") or sym
 
-    progress_bar.empty()
-    status_text.empty()
-    
+            industry_match = any(
+                (y.lower() in industry.lower()) or (industry.lower() in y.lower())
+                for y in selected_industries
+            )
+
+            if (
+                industry_match
+                and market_cap > 1_000_000_000
+                and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ"])
+            ):
+                rows.append({
+                    "Ticker": sym,
+                    "Company": company_name,
+                    "Yahoo Industry": industry,
+                    "Market Cap": market_cap,
+                    "Exchange": exchange
+                })
+        except:
+            continue
+
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
@@ -180,7 +196,7 @@ def fetch_stocks_in_industries(selected_industries: tuple):
     return df
 
 
-# ====================== SCRAPER ENGINE ======================
+# ====================== SCRAPER ENGINE (UPDATED) ======================
 def parse_report_text(text):
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 0.0
@@ -198,8 +214,9 @@ def parse_report_text(text):
     contr_p = r"reporting contraction in \w+.*?\s+are:(.*?)\."
 
     comments = get_respondent_comments(text)
+    subcomponents = parse_ism_subcomponents(text)  # ← NEW
 
-    return pmi, month_year, get_list(growth_p, text), get_list(contr_p, text), comments
+    return pmi, month_year, get_list(growth_p, text), get_list(contr_p, text), comments, subcomponents
 
 
 @st.cache_data(ttl=86400)
@@ -222,7 +239,7 @@ def build_historical_dataset():
         for url in list(dict.fromkeys(links))[:8]:
             resp = requests.get(url, headers=HEADERS, timeout=10)
             raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
-            pmi, m_year, growth, contr, comments = parse_report_text(raw_text)
+            pmi, m_year, growth, contr, comments, subcomponents = parse_report_text(raw_text)
             
             if m_year == "Unknown":
                 continue
@@ -232,6 +249,7 @@ def build_historical_dataset():
             report_metadata[date_obj] = {
                 "comments": comments,
                 "pmi": pmi,
+                "subcomponents": subcomponents,
                 "url": url
             }
             
@@ -276,10 +294,36 @@ if not df_master.empty:
     pmi_val = latest_meta.get("pmi", current_df['pmi'].iloc[0])
     report_url = latest_meta.get("url", current_df['url'].iloc[0])
     comments_list = latest_meta.get("comments", [])
+    subcomponents = latest_meta.get("subcomponents", {})
 
+    # --- TOP METRIC + SUB-INDICES (Step 1 of professional architecture) ---
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
-    st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs 50.0 Neutral")
 
+    # Main PMI + key subcomponents in a clean metric grid
+    metric_cols = st.columns(6)
+    with metric_cols[0]:
+        st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs Neutral")
+    with metric_cols[1]:
+        new_orders = subcomponents.get("New Orders")
+        delta_no = f"{new_orders - 50:.1f} vs Neutral" if new_orders else None
+        st.metric("New Orders", f"{new_orders}%" if new_orders else "N/A", delta=delta_no)
+    with metric_cols[2]:
+        employment = subcomponents.get("Employment")
+        delta_emp = f"{employment - 50:.1f} vs Neutral" if employment else None
+        st.metric("Employment", f"{employment}%" if employment else "N/A", delta=delta_emp)
+    with metric_cols[3]:
+        prices = subcomponents.get("Prices")
+        delta_prices = f"{prices - 50:.1f} vs Neutral" if prices else None
+        st.metric("Prices Paid", f"{prices}%" if prices else "N/A", delta=delta_prices)
+    with metric_cols[4]:
+        backlog = subcomponents.get("Backlog of Orders")
+        delta_backlog = f"{backlog - 50:.1f} vs Neutral" if backlog else None
+        st.metric("Backlog of Orders", f"{backlog}%" if backlog else "N/A", delta=delta_backlog)
+    with metric_cols[5]:
+        production = subcomponents.get("Production")
+        st.metric("Production", f"{production}%" if production else "N/A")
+
+    # --- Rest of the app (unchanged) ---
     col_table, col_info = st.columns([2, 1])
     
     with col_table:
@@ -320,7 +364,6 @@ if not df_master.empty:
         else:
             st.info("No respondent comments available for this report.")
 
-    # === STOCKS SECTION – FULL NYSE + NASDAQ ===
     st.subheader("📊 Stocks in Selected Yahoo Industries")
     st.caption("**FULL NYSE + NASDAQ** • Pure Yahoo Finance pull • Market Cap > $1 Billion")
 
@@ -379,8 +422,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Full NYSE + NASDAQ mode** – every qualifying company with MC > $1B.")
+    st.caption("**Professional macro layer enabled** – sub-indices now extracted for future exposure scoring.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
-
