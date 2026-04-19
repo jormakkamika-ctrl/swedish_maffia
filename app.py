@@ -47,9 +47,10 @@ NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
 def get_respondent_comments(text: str) -> list[str]:
     """
-    Extracts the bullet-point comments from the 'WHAT RESPONDENTS ARE SAYING' section.
-    Works with real PR Newswire report formatting.
+    Robust extraction that preserves ORIGINAL bullet-point structure from ISM reports.
+    Works with both * "quote" [Industry] and - "quote" formats (tested on March 2026 report).
     """
+    # Find the entire WHAT RESPONDENTS ARE SAYING section
     section_match = re.search(
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management®|©|ISM® Reports|Report Issued|$))",
         text,
@@ -60,27 +61,32 @@ def get_respondent_comments(text: str) -> list[str]:
 
     section = section_match.group(1).strip()
 
-    bullet_pattern = r'(?:\*|\-)\s*["“](.+?)["”]\s*(?:\[\s*(.+?)\s*\])?'
-    bullets = re.findall(bullet_pattern, section, re.DOTALL)
+    # Split on bullet markers (* or -) — this handles the exact format in real reports
+    # (separator="\n" in BeautifulSoup keeps the bullets on separate lines)
+    raw_bullets = re.split(r'\s*(?:\*|\-)\s*', section)
 
     comments = []
-    for quote, industry in bullets:
-        quote = quote.strip()
-        if quote and len(quote) > 15:
-            comment = f"• {quote}"
-            if industry:
-                industry = industry.strip()
-                comment += f" [{industry}]"
-            comments.append(comment)
+    for item in raw_bullets:
+        item = item.strip()
+        if not item or len(item) < 25:
+            continue
 
-    if not comments:
-        raw_bullets = re.split(r'\s*(?:\*|\-)\s*', section)
-        for line in raw_bullets:
-            line = line.strip().strip('"“”')
-            if line and len(line) > 20:
-                comments.append(f"• {line}")
+        # Remove surrounding quotes and clean up
+        item = item.strip('"“”')
 
-    return comments
+        # Extract optional [Industry] tag at the end
+        industry_match = re.search(r'\[\s*(.+?)\s*\]$', item)
+        if industry_match:
+            industry = industry_match.group(1).strip()
+            quote = re.sub(r'\[\s*.+?\s*\]$', '', item).strip()
+            comment = f"• **{quote}**  *[{industry}]*"
+        else:
+            comment = f"• **{item}**"
+
+        comments.append(comment)
+
+    # Remove any accidental duplicates
+    return list(dict.fromkeys(comments))
 
 
 # ====================== SCRAPER ENGINE ======================
@@ -125,7 +131,8 @@ def build_historical_dataset():
         
         for url in list(dict.fromkeys(links))[:8]:
             resp = requests.get(url, headers=HEADERS, timeout=10)
-            raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
+            # IMPORTANT: Use separator="\n" so bullet points stay on separate lines
+            raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator="\n")
             pmi, m_year, growth, contr, comments = parse_report_text(raw_text)
             
             if m_year == "Unknown":
@@ -210,13 +217,12 @@ if not df_master.empty:
         status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
         st.write(f"Current Status: **{status}** ({score_now:+d})")
 
-    # === NEW FULL-WIDTH EXPANDABLE SECTION (exactly where the red line is in your screenshot) ===
+    # === FULL-WIDTH EXPANDABLE SECTION (exactly where you wanted it) ===
     st.divider()
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
             for comment in comments_list:
                 st.markdown(comment)
-                st.divider()
         else:
             st.info("No respondent comments available for this report.")
 
