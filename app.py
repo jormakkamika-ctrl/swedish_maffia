@@ -1,3 +1,4 @@
+HTML<FILE filename="app.py" size="14650 bytes">
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -92,42 +93,48 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== ENHANCED SUB-INDEX PARSER ======================
+# ====================== FIXED SUB-INDEX PARSER ======================
 def parse_ism_subcomponents(text: str) -> dict:
     """
-    Extracts CURRENT value (Mar), MoM CHANGE, and TREND MONTHS from the MANUFACTURING AT A GLANCE table.
-    Returns a rich dict for compact, professional display.
+    Robust parser for the MANUFACTURING AT A GLANCE table.
+    Returns a safe dict with current, change, trend for each key.
     """
     sub = {
-        "New Orders": {"current": None, "change": None, "trend": None, "direction": ""},
-        "Production": {"current": None, "change": None, "trend": None, "direction": ""},
-        "Employment": {"current": None, "change": None, "trend": None, "direction": ""},
-        "Prices": {"current": None, "change": None, "trend": None, "direction": ""},
-        "Backlog of Orders": {"current": None, "change": None, "trend": None, "direction": ""},
+        "New Orders": {"current": None, "change": None, "trend": None},
+        "Production": {"current": None, "change": None, "trend": None},
+        "Employment": {"current": None, "change": None, "trend": None},
+        "Prices": {"current": None, "change": None, "trend": None},
+        "Backlog of Orders": {"current": None, "change": None, "trend": None},
     }
 
-    # Match each row in the table format (works on real March 2026 report)
+    # More flexible regex that matches the real table format
     for key in sub.keys():
-        # Pattern matches: Key   53.5   55.8   -2.3   Growing   Slower   3
-        pattern = rf"{re.escape(key)}\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)\s*(\w+)\s*(?:Faster|Slower|Too Low|From Growing)?\s*(\d+)"
+        # Matches: Key   53.5   55.8   -2.3   Growing   Slower   3
+        pattern = rf"{re.escape(key)}\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)\s*\w+\s*(?:Faster|Slower|Too Low|From Growing)?\s*(\d+)"
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             sub[key]["current"] = float(match.group(1))
             sub[key]["change"] = float(match.group(2))
-            sub[key]["direction"] = match.group(3).strip()
-            sub[key]["trend"] = int(match.group(4))
+            sub[key]["trend"] = int(match.group(3))
 
-    # Fallback for "Prices Paid" (sometimes just "Prices")
+    # Extra fallback for Prices (sometimes labeled "Prices Paid")
     if sub["Prices"]["current"] is None:
         prices_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
         if prices_match:
             sub["Prices"]["current"] = float(prices_match.group(1))
             sub["Prices"]["change"] = float(prices_match.group(2))
 
+    # Extra fallback for Backlog of Orders
+    if sub["Backlog of Orders"]["current"] is None:
+        backlog_match = re.search(r"Backlog of Orders\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
+        if backlog_match:
+            sub["Backlog of Orders"]["current"] = float(backlog_match.group(1))
+            sub["Backlog of Orders"]["change"] = float(backlog_match.group(2))
+
     return sub
 
 
-# ====================== STOCK FETCHER (FULL NYSE + NASDAQ) ======================
+# ====================== STOCK FETCHER ======================
 @st.cache_data(ttl=86400)
 def get_all_nyse_nasdaq_tickers():
     tickers = set()
@@ -294,26 +301,29 @@ if not df_master.empty:
     comments_list = latest_meta.get("comments", [])
     subcomponents = latest_meta.get("subcomponents", {})
 
-    # --- TOP METRIC + COMPACT SUB-INDICES ---
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # Compact metric row
-    metric_cols = st.columns(6)
+    # === COMPACT SUB-INDICES (safe version) ===
+    metric_cols = st.columns(5)
     keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
     labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
 
     for i, (key, label) in enumerate(zip(keys, labels)):
-        data = subcomponents.get(key, {})
-        current = data.get("current")
+        data = subcomponents.get(key)
+        # Defensive check – this fixes the error you saw
+        if not isinstance(data, dict) or data.get("current") is None:
+            with metric_cols[i]:
+                st.metric(label=label, value="N/A")
+            continue
+
+        current = data["current"]
         change = data.get("change")
         trend = data.get("trend")
 
-        if current is not None and change is not None and trend is not None:
+        if change is not None and trend is not None:
             delta_str = f"{change:+.1f}/{trend}"
-            # Color logic: red if contracting (<50) or negative change, green if expanding (>50)
-            is_expanding = current > 50
-            delta_color = "inverse" if not is_expanding else "normal"
-            
+            # Green if expanding (>50), red if contracting (<50)
+            delta_color = "normal" if current > 50 else "inverse"
             with metric_cols[i]:
                 st.metric(
                     label=label,
@@ -323,9 +333,9 @@ if not df_master.empty:
                 )
         else:
             with metric_cols[i]:
-                st.metric(label=label, value="N/A")
+                st.metric(label=label, value=f"{current:.1f}")
 
-    # --- Rest of the app unchanged ---
+    # --- Rest of the app ---
     col_table, col_info = st.columns([2, 1])
     
     with col_table:
@@ -390,7 +400,6 @@ if not df_master.empty:
         else:
             st.warning("Please select at least one Yahoo Finance industry above.")
 
-    # --- HISTORICAL TREND HEATMAP ---
     st.subheader("📈 6-Month Sector Momentum")
     pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
     pivot = pivot.reindex(INDUSTRIES)
@@ -407,7 +416,6 @@ if not df_master.empty:
     fig.update_layout(height=600, xaxis_title="")
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- SECTOR TRACKER (LINE CHART) ---
     st.subheader("Industry Score Evolution")
     to_track = st.multiselect("Select industries to compare:", INDUSTRIES, 
                               default=["Transportation Equipment", "Chemical Products", "Computer & Electronic Products"])
@@ -424,7 +432,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Compact sub-indices enabled** – now shows MoM change + trend months with proper color coding.")
+    st.caption("**Compact sub-indices fixed** – now fully robust.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
