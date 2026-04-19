@@ -94,7 +94,7 @@ def get_respondent_comments(text: str) -> list[str]:
 
 # ====================== FINAL STRONG SUB-INDEX PARSER ======================
 def parse_ism_subcomponents(text: str) -> dict:
-    """Extremely robust parser for the MANUFACTURING AT A GLANCE table."""
+    """Robust parser specifically for the ISM 'At A Glance' table structure."""
     sub = {
         "New Orders": {"current": None, "change": None, "trend": None},
         "Production": {"current": None, "change": None, "trend": None},
@@ -103,48 +103,39 @@ def parse_ism_subcomponents(text: str) -> dict:
         "Backlog of Orders": {"current": None, "change": None, "trend": None},
     }
 
+    # Clean the text to remove double spaces which break Regex table matching
+    clean_text = re.sub(r'\s+', ' ', text)
+
     for key in sub.keys():
-        # 1. Current value (first number after key)
-        cur = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
-        if cur:
-            sub[key]["current"] = float(cur.group(1))
+        # Using a pattern that matches the column flow: 
+        # Key -> Index -> Prev Index -> Change -> Direction -> Rate -> Trend
+        # Example: "New Orders 53.5 55.8 -2.3 Growing Slower 3"
+        row_pattern = rf"{re.escape(key)}\s+(\d+\.\d+)\s+[\d.]+\s+([+-]?\d+\.\d+)\s+(?:Growing|Contracting|Increasing|Decreasing|Slower|Faster|Unchanged)\s+(?:Growing|Contracting|Increasing|Decreasing|Slower|Faster|Unchanged)?\s*(\d+)"
+        
+        match = re.search(row_pattern, clean_text, re.IGNORECASE)
+        
+        if match:
+            sub[key]["current"] = float(match.group(1))
+            sub[key]["change"] = float(match.group(2))
+            sub[key]["trend"] = int(match.group(3))
+        else:
+            # Fallback for simpler lines or Prices Paid which sometimes misses the "Rate" column
+            fallback_pattern = rf"{re.escape(key)}\s+(\d+\.\d+)\s+[\d.]+\s+([+-]?\d+\.\d+).*?\s+(\d+)\s*(?:$|\s)"
+            fb_match = re.search(fallback_pattern, clean_text, re.IGNORECASE)
+            if fb_match:
+                sub[key]["current"] = float(fb_match.group(1))
+                sub[key]["change"] = float(fb_match.group(2))
+                sub[key]["trend"] = int(fb_match.group(3))
 
-        # 2. MoM change (the +/- number that follows)
-        chg = re.search(rf"{re.escape(key)}\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
-        if chg:
-            sub[key]["change"] = float(chg.group(1))
-
-        # 3. Trend months (the last number in the row)
-        tr = re.search(rf"{re.escape(key)}.*?\s+(\d+)\s*$", text, re.IGNORECASE | re.DOTALL)
-        if tr:
-            sub[key]["trend"] = int(tr.group(1))
-
-    # Extra broad fallbacks
-    for key in sub.keys():
-        if sub[key]["current"] is None:
-            broad_cur = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
-            if broad_cur:
-                sub[key]["current"] = float(broad_cur.group(1))
-        if sub[key]["change"] is None and sub[key]["current"] is not None:
-            broad_chg = re.search(r"([+-]?\d+\.\d+)", text[text.find(key):text.find(key)+150])
-            if broad_chg:
-                sub[key]["change"] = float(broad_chg.group(1))
-        if sub[key]["trend"] is None and sub[key]["current"] is not None:
-            broad_tr = re.search(r"\d+\s*$", text[text.find(key):text.find(key)+200])
-            if broad_tr:
-                sub[key]["trend"] = int(broad_tr.group(0).strip())
-
-    # Prices Paid fallback
+    # Specific fix for Prices Paid naming mismatch
     if sub["Prices"]["current"] is None:
-        p = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
-        if p:
-            sub["Prices"]["current"] = float(p.group(1))
-
-    # Backlog of Orders fallback
-    if sub["Backlog of Orders"]["current"] is None:
-        b = re.search(r"Backlog of Orders\s*(\d+\.\d+)", text, re.IGNORECASE)
-        if b:
-            sub["Backlog of Orders"]["current"] = float(b.group(1))
+        p_match = re.search(r"Prices\s+(\d+\.\d+)\s+[\d.]+\s+([+-]?\d+\.\d+).*?\s+(\d+)", clean_text, re.IGNORECASE)
+        if p_match:
+            sub["Prices"] = {
+                "current": float(p_match.group(1)),
+                "change": float(p_match.group(2)),
+                "trend": int(p_match.group(3))
+            }
 
     return sub
 
