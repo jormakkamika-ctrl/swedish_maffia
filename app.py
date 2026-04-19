@@ -296,31 +296,53 @@ def get_all_nyse_nasdaq_tickers():
             continue
     return sorted(list(tickers))
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
+    """Robust batched version — avoids yfinance crash and shows progress."""
     tickers_list = get_all_nyse_nasdaq_tickers()
-    tickers_obj = yf.Tickers(" ".join(tickers_list))
+    if not tickers_list:
+        return pd.DataFrame()
+
+    batch_size = 150
     rows = []
-    for sym in tickers_list:
+    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe...")
+
+    for i in range(0, len(tickers_list), batch_size):
+        batch = tickers_list[i:i + batch_size]
         try:
-            info = tickers_obj.tickers.get(sym)
-            if not info:
-                continue
-            info = info.info
-            industry = info.get("industry", "") or ""
-            market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
-            exchange = (info.get("exchange", "") or "").upper()
-            company_name = info.get("longName") or info.get("shortName") or sym
-            if market_cap > 1_000_000_000 and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ"]):
-                rows.append({
-                    "Ticker": sym,
-                    "Company": company_name,
-                    "Yahoo Industry": industry,
-                    "Market Cap": market_cap,
-                    "Exchange": exchange
-                })
+            tickers_obj = yf.Tickers(" ".join(batch))
+            for sym in batch:
+                try:
+                    info = tickers_obj.tickers.get(sym)
+                    if not info:
+                        continue
+                    info = info.info
+
+                    industry = info.get("industry", "") or ""
+                    market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
+                    exchange = (info.get("exchange", "") or "").upper()
+                    company_name = info.get("longName") or info.get("shortName") or sym
+
+                    if (market_cap > 1_000_000_000 and
+                        any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ"])):
+                        rows.append({
+                            "Ticker": sym,
+                            "Company": company_name,
+                            "Yahoo Industry": industry,
+                            "Market Cap": market_cap,
+                            "Exchange": exchange
+                        })
+                except:
+                    continue  # skip individual bad tickers
         except:
-            continue
+            continue  # skip bad batch
+
+        # Update progress
+        progress = min((i + batch_size) / len(tickers_list), 1.0)
+        progress_bar.progress(progress, text=f"Processed {i + len(batch)} / {len(tickers_list)} tickers...")
+
+    progress_bar.empty()
+
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
