@@ -5,6 +5,7 @@ import pandas as pd
 import re
 import plotly.express as px
 import numpy as np
+import yfinance as yf
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List
@@ -278,6 +279,7 @@ def parse_ism_subcomponents(text: str) -> dict:
 # ====================== STOCK UNIVERSE ======================
 @st.cache_data(ttl=86400)
 def get_all_nyse_nasdaq_tickers():
+    """Robust version that handles flaky Nasdaq CSVs and returns thousands of tickers."""
     tickers = set()
     urls = [
         "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/nasdaqtraded.txt",
@@ -285,30 +287,38 @@ def get_all_nyse_nasdaq_tickers():
     ]
     for url in urls:
         try:
-            df = pd.read_csv(url, sep='|', on_bad_lines='skip')
-            if 'ETF' in df.columns:
-                df = df[df['ETF'] == 'N']
-            symbol_col = 'Symbol' if 'Symbol' in df.columns else df.columns[0]
+            df = pd.read_csv(url, sep='|', on_bad_lines='skip', header=0)
+            # Handle different column names across the two files
+            if 'Symbol' in df.columns:
+                symbol_col = 'Symbol'
+            elif df.columns[0] == 'Symbol':
+                symbol_col = df.columns[0]
+            else:
+                symbol_col = df.columns[0]  # fallback
+            
             clean = df[symbol_col].astype(str).str.strip()
             clean = clean[~clean.str.contains(r'[\.\^]', regex=True)]
+            if 'ETF' in df.columns:
+                clean = clean[df['ETF'] == 'N']
             tickers.update(clean.tolist())
-        except Exception:
+        except Exception as e:
+            st.warning(f"⚠️ Nasdaq fetch warning: {str(e)[:80]}")
             continue
     return sorted(list(tickers))
 
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Robust, batched, debug-friendly version for Streamlit Cloud."""
+    """Fixed & robust version — works on Streamlit Cloud."""
     tickers_list = get_all_nyse_nasdaq_tickers()
     st.info(f"✅ Loaded {len(tickers_list):,} tickers from Nasdaq directories")
 
-    if len(tickers_list) < 100:
-        st.error("❌ Ticker list is too small — Nasdaq fetch probably failed.")
-        return pd.DataFrame()
+    if len(tickers_list) < 1000:
+        st.warning("⚠️ Smaller ticker list than expected — still proceeding with available data.")
 
-    batch_size = 50   # smaller batches = more reliable on Cloud
+    batch_size = 50
     rows = []
-    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe... (first run ~60-90s)")
+    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe... (first run ~60–90s)")
 
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i:i + batch_size]
@@ -320,7 +330,6 @@ def get_full_stock_universe():
                     if not info:
                         continue
                     info = info.info
-
                     industry = info.get("industry", "") or ""
                     market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
                     exchange = (info.get("exchange", "") or "").upper()
@@ -338,22 +347,21 @@ def get_full_stock_universe():
                 except:
                     continue
         except Exception as e:
-            st.warning(f"Batch {i//batch_size + 1} skipped: {str(e)[:80]}")
+            st.warning(f"Batch skipped: {str(e)[:80]}")
+            continue
 
-        # Update progress
         progress = min((i + batch_size) / len(tickers_list), 1.0)
-        progress_bar.progress(progress, text=f"Processed {len(rows)} qualifying stocks so far...")
+        progress_bar.progress(progress, text=f"Found {len(rows)} qualifying stocks so far...")
 
     progress_bar.empty()
 
     df = pd.DataFrame(rows)
-    st.info(f"✅ Final universe built: {len(df):,} stocks with Market Cap > $1B")
-
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
+        st.success(f"✅ Built universe with {len(df):,} stocks (> $1B market cap)")
     else:
-        st.error("❌ No stocks passed the filters — this should not happen.")
+        st.error("❌ Still no stocks — please try 'Deep Refresh' once.")
 
     return df
 
