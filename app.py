@@ -4,13 +4,11 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import plotly.express as px
-import yfinance as yf
-import os
 from datetime import datetime
 
-st.set_page_config(page_title="ISM PMI Tracker", layout="wide")
+st.set_page_config(page_title="ISM PMI Intelligence", layout="wide")
 
-# ====================== CONFIG ======================
+# ====================== CONFIG & MAPPING ======================
 INDUSTRIES = [
     "Food, Beverage & Tobacco Products", "Textile Mills", "Apparel, Leather & Allied Products",
     "Wood Products", "Paper Products", "Printing & Related Support Activities",
@@ -20,33 +18,23 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-HISTORICAL_FILE = "ism_history.csv"
-
-# ====================== ISM → TICKER MAPPING (starter list) ======================
-# You can expand these lists over time — these are major >$1B companies per ISM industry
-ISM_TO_TICKERS = {
-    "Food, Beverage & Tobacco Products": ["KO", "PEP", "MDLZ", "KHC", "GIS", "STZ", "MNST", "ADM", "TSN", "KDP"],
-    "Textile Mills": ["NWL", "UFI", "CFR", "TILE"],  # limited large-cap
-    "Apparel, Leather & Allied Products": ["NKE", "VFC", "PVH", "HBI", "LEVI", "COLM"],
-    "Wood Products": ["WY", "LL", "WFG", "BCC"],
-    "Paper Products": ["IP", "PKG", "AVY", "SEE"],
-    "Printing & Related Support Activities": ["RRD", "DLX"],  # smaller sector
-    "Petroleum & Coal Products": ["XOM", "CVX", "PSX", "MPC", "VLO", "HFC"],
-    "Chemical Products": ["DOW", "DD", "LYB", "ECL", "PPG", "SHW", "APD", "LIN", "CF", "MOS"],
-    "Plastics & Rubber Products": ["GT", "BLL", "CCK", "AVY"],
-    "Nonmetallic Mineral Products": ["VMC", "MLM", "EXP", "CX", "SUM"],
-    "Primary Metals": ["NUE", "X", "CLF", "STLD", "RS", "ATI", "AA"],
-    "Fabricated Metal Products": ["EMR", "PH", "ITW", "FAST", "NWPX"],
-    "Machinery": ["CAT", "DE", "ETN", "HON", "CMI", "IR", "ROP", "AME", "DOV"],
-    "Computer & Electronic Products": ["AAPL", "MSFT", "NVDA", "INTC", "AMD", "QCOM", "MU", "AVGO"],
-    "Electrical Equipment, Appliances & Components": ["GE", "EMR", "ETN", "PH", "ROK", "AMT"],
-    "Transportation Equipment": ["F", "GM", "TSLA", "HON", "RTX", "LMT", "BA", "NOC", "GD", "UNP"],
-    "Furniture & Related Products": ["MHK", "TPX", "LZB", "LEG"],
-    "Miscellaneous Manufacturing": ["3M", "GE", "HON", "ITW"]
+# Standardized mapping for "Stocks in Selected Sector" feature
+ISM_TO_GICS = {
+    "Transportation Equipment": ["Automobiles", "Auto Components", "Aerospace & Defense"],
+    "Computer & Electronic Products": ["Technology Hardware", "Semiconductors", "Electronic Equipment"],
+    "Chemical Products": ["Chemicals", "Pharmaceuticals"],
+    "Food, Beverage & Tobacco Products": ["Food Products", "Beverages", "Tobacco"],
+    "Primary Metals": ["Metals & Mining"],
+    "Machinery": ["Machinery"],
+    "Furniture & Related Products": ["Household Durables"],
+    "Petroleum & Coal Products": ["Oil, Gas & Consumable Fuels"],
+    "Electrical Equipment, Appliances & Components": ["Electrical Equipment"],
+    "Textile Mills": ["Textiles, Apparel & Luxury Goods"]
 }
 
-# ====================== NAME NORMALIZATION ======================
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+# ====================== UTILS ======================
 def normalize_name(name: str) -> str:
     name = name.lower().strip()
     name = name.replace("&", "and")
@@ -56,180 +44,153 @@ def normalize_name(name: str) -> str:
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
-# ====================== DATA PERSISTENCE ======================
-def load_history():
-    if os.path.exists(HISTORICAL_FILE):
-        df = pd.read_csv(HISTORICAL_FILE)
-        df["date"] = pd.to_datetime(df["date"])
-        return df
-    return pd.DataFrame(columns=["date", "industry", "score"])
+# ====================== SCRAPER ENGINE ======================
+def parse_report_text(text):
+    pmi_match = re.search(r"at (\d+\.\d+)%", text)
+    pmi = float(pmi_match.group(1)) if pmi_match else 0.0
 
-def save_to_history(df, report_date):
-    existing_df = load_history()
-    new_data = df.copy()
-    new_data["date"] = pd.to_datetime(report_date)
-    combined = pd.concat([existing_df, new_data]).drop_duplicates(subset=["date", "industry"], keep="last")
-    combined.to_csv(HISTORICAL_FILE, index=False)
-    return combined
+    month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
+    month_year = month_match.group(0) if month_match else "Unknown"
 
-# ====================== SCRAPER (unchanged) ======================
-def fetch_report_content(url):
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        text = BeautifulSoup(r.text, "html.parser").get_text(separator=" ")
+    def get_list(pattern, src):
+        match = re.search(pattern, src, re.DOTALL | re.IGNORECASE)
+        if not match: return []
+        raw = match.group(1).replace(" and ", "; ")
+        return [x.strip().strip('.') for x in raw.split(";") if len(x.strip()) > 3]
 
-        pmi_match = re.search(r"Manufacturing PMI® .*?at (\d+\.\d+)%", text)
-        pmi = float(pmi_match.group(1)) if pmi_match else 0.0
-
-        month_match = re.search(r"(\w+ \d{4}) ISM® Manufacturing", text)
-        month_year = month_match.group(1) if month_match else "Unknown"
-
-        growth_block = re.search(r"listed in order — are:(.*?)\. The", text, re.DOTALL | re.IGNORECASE)
-        growth_list = []
-        if growth_block:
-            raw = growth_block.group(1).replace(" and ", "; ")
-            growth_list = [x.strip() for x in raw.split(";") if x.strip()]
-
-        contr_block = re.search(r"contraction in \w+ are:(.*?)\.", text, re.DOTALL | re.IGNORECASE)
-        contraction_list = []
-        if contr_block:
-            raw = contr_block.group(1).replace(" and ", "; ")
-            contraction_list = [x.strip() for x in raw.split(";") if x.strip()]
-
-        return pmi, month_year, growth_list, contraction_list, url
-    except Exception:
-        return None, None, [], [], None
-
-@st.cache_data(ttl=43200)
-def get_latest_data():
-    url = "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-52-7-march-2026-ism-manufacturing-pmi-report-302730721.html"
-    return fetch_report_content(url)
-
-# ====================== LIVE STOCK LOOKUP ======================
-@st.cache_data(ttl=3600)  # 1 hour cache
-def get_stocks_for_industry(industry: str):
-    tickers = ISM_TO_TICKERS.get(industry, [])
-    if not tickers:
-        return pd.DataFrame()
+    # Specific ISM delimiters
+    growth_p = r"listed in order\s*[\u2014-]\s*are:(.*?)\.\s*The"
+    contr_p = r"contraction in \w+ are:(.*?)\."
     
-    # Batch fetch with yfinance
-    data = yf.Tickers(" ".join(tickers))
-    rows = []
-    for t in tickers:
-        try:
-            info = data.tickers[t].info
-            market_cap = info.get("marketCap", 0) or info.get("enterpriseValue", 0)
-            if market_cap and market_cap > 1_000_000_000:  # > $1B
-                rows.append({
-                    "Ticker": t,
-                    "Company": info.get("longName", t),
-                    "Market Cap": market_cap,
-                    "Price": info.get("currentPrice", info.get("regularMarketPrice")),
-                    "% Change": info.get("regularMarketChangePercent", 0),
-                    "Link": f"https://finance.yahoo.com/quote/{t}"
+    return pmi, month_year, get_list(growth_p, text), get_list(contr_p, text)
+
+@st.cache_data(ttl=86400)
+def build_historical_dataset():
+    """Scrapes the PR Newswire newsroom to build a 6-month historical window."""
+    all_data = []
+    archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
+    
+    try:
+        r = requests.get(archive_url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(r.text, "html.parser")
+        
+        # Find the specific manufacturing report links
+        links = []
+        for a in soup.find_all('a', href=True):
+            if "manufacturing-pmi-report" in a['href'].lower():
+                full_url = "https://www.prnewswire.com" + a['href'] if a['href'].startswith('/') else a['href']
+                links.append(full_url)
+        
+        # Process the most recent 8 links to ensure we cover a 6-month gap
+        for url in list(dict.fromkeys(links))[:8]:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
+            pmi, m_year, growth, contr = parse_report_text(raw_text)
+            
+            if m_year == "Unknown": continue
+            
+            n_g, n_c = len(growth), len(contr)
+            month_scores = {ind: 0 for ind in INDUSTRIES}
+            
+            # Use normalization for robust matching
+            for i, s in enumerate(growth):
+                norm = normalize_name(s)
+                if norm in NORM_TO_OFFICIAL: month_scores[NORM_TO_OFFICIAL[norm]] = n_g - i
+            
+            for i, s in enumerate(contr):
+                norm = normalize_name(s)
+                if norm in NORM_TO_OFFICIAL: month_scores[NORM_TO_OFFICIAL[norm]] = -(n_c - i)
+            
+            for ind, score in month_scores.items():
+                all_data.append({
+                    "date": pd.to_datetime(m_year), 
+                    "industry": ind, 
+                    "score": score, 
+                    "pmi": pmi,
+                    "url": url
                 })
-        except:
-            continue
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("Market Cap", ascending=False)
-        df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1e9:.1f}B")
-    return df
+    except Exception as e:
+        st.error(f"Archive Fetch Error: {e}")
+
+    return pd.DataFrame(all_data)
 
 # ====================== MAIN APP ======================
-st.title("🏭 ISM Manufacturing Industry Heatmap + Stocks")
+st.title("🏭 ISM Manufacturing Intelligence Hub")
 
-hist_df = load_history()
-pmi, month_year, growth, contraction, report_url = get_latest_data()
+with st.spinner("Rebuilding 6-month sector history from PR Newswire..."):
+    df_master = build_historical_dataset()
 
-if pmi:
-    # Scoring (unchanged)
-    scores = {ind: 0 for ind in INDUSTRIES}
-    n_growth = len(growth)
-    n_contr = len(contraction)
+if not df_master.empty:
+    latest_date = df_master['date'].max()
+    current_df = df_master[df_master['date'] == latest_date].copy()
+    pmi_val = current_df['pmi'].iloc[0]
+    report_url = current_df['url'].iloc[0]
 
-    for i, scraped in enumerate(growth):
-        norm = normalize_name(scraped)
-        if norm in NORM_TO_OFFICIAL:
-            official = NORM_TO_OFFICIAL[norm]
-            scores[official] = n_growth - i
+    # --- TOP METRIC ---
+    st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
+    st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs 50.0 Neutral")
 
-    for i, scraped in enumerate(contraction):
-        norm = normalize_name(scraped)
-        if norm in NORM_TO_OFFICIAL:
-            official = NORM_TO_OFFICIAL[norm]
-            scores[official] = -(n_contr - i)
+    # --- HEATMAP TABLE ---
+    col_table, col_info = st.columns([2, 1])
+    
+    with col_table:
+        st.write("**Industry Rankings (Ordered by Growth)**")
+        styled_df = (
+            current_df[["industry", "score"]]
+            .sort_values("score", ascending=False)
+            .style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
+            .format({"score": "{:+d}"})
+            .set_properties(**{"font-weight": "bold"})
+        )
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-    current_df = pd.DataFrame({"industry": list(scores.keys()), "score": list(scores.values())})
-    saved_df = save_to_history(current_df, month_year)
-
-    # Current month table
-    st.subheader(f"Ranked Sector Performance: {month_year} (PMI® {pmi}%)")
-
-    styled_df = (
-        current_df
-        .sort_values("score", ascending=False)
-        .style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
-        .format({"score": "{:+d}"})
-        .set_properties(**{"text-align": "left", "font-weight": "bold"})
-    )
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
-
-    # Download button
-    st.caption("💾 Historical data is saved automatically in this app.")
-    csv_data = saved_df.to_csv(index=False)
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.download_button("📥 Download ism_history.csv", csv_data, "ism_history.csv", "text/csv")
-    with col2:
-        st.info("Replace `ism_history.csv` in GitHub once per month to keep history.")
-
-    # ====================== STOCK LOOKUP SECTION ======================
-    st.divider()
-    st.subheader("📋 Stocks in Selected Sector (> $1B market cap)")
-
-    # Simple click-to-select (using selectbox for maximum compatibility)
-    selected_industry = st.selectbox(
-        "Click a row above or select here:",
-        options=["(Select a sector)"] + list(INDUSTRIES),
-        index=0
-    )
-
-    if selected_industry != "(Select a sector)":
-        stock_df = get_stocks_for_industry(selected_industry)
+    with col_info:
+        st.write("**Investment Context**")
+        selected_sector = st.selectbox("Select Sector for GICS Mapping:", INDUSTRIES)
+        related_gics = ISM_TO_GICS.get(selected_sector, ["No direct GICS mapping found"])
         
-        if not stock_df.empty:
-            st.success(f"**{selected_industry}** — {len(stock_df)} stocks found (> $1B cap)")
-            st.dataframe(
-                stock_df.style.format({"% Change": "{:+.2f}%"}),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            st.caption("💡 Click any Ticker link to open Yahoo Finance")
-        else:
-            st.info("No stocks > $1B found for this sector (or mapping needs expansion).")
-    else:
-        st.info("👆 Select a sector above to see live stock list")
+        st.info(f"**ISM Sector:** {selected_sector}\n\n**Commonly maps to GICS:**\n" + "\n".join([f"- {g}" for g in related_gics]))
+        
+        score_now = current_df[current_df['industry'] == selected_sector]['score'].iloc[0]
+        status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
+        st.write(f"Current Status: **{status}** ({score_now:+d})")
 
-    # Historical heatmap (unchanged)
+    # --- HISTORICAL TREND HEATMAP ---
     st.divider()
-    st.subheader("📈 6-Month Sector Momentum (Fixed Sector Order)")
-    full_hist = load_history()
-    if not full_hist.empty:
-        pivot = full_hist.pivot(index="industry", columns="date", values="score").fillna(0)
-        pivot = pivot.reindex(INDUSTRIES)
-        pivot.columns = pivot.columns.strftime('%b %Y')
-        fig = px.imshow(pivot, color_continuous_scale="RdYlGn", color_continuous_midpoint=0,
-                        text_auto=True, aspect="auto")
-        fig.update_layout(xaxis_title="", yaxis_title="", height=650)
-        st.plotly_chart(fig, use_container_width=True)
+    st.subheader("📈 6-Month Sector Momentum")
+    
+    pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
+    pivot = pivot.reindex(INDUSTRIES)
+    pivot.columns = pivot.columns.strftime('%b %Y')
+
+    fig = px.imshow(
+        pivot,
+        labels=dict(x="Report Month", y="Industry", color="Score"),
+        color_continuous_scale="RdYlGn",
+        color_continuous_midpoint=0,
+        text_auto=True,
+        aspect="auto"
+    )
+    fig.update_layout(height=600, xaxis_title="")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # --- SECTOR TRACKER (LINE CHART) ---
+    st.subheader("Industry Score Evolution")
+    to_track = st.multiselect("Select industries to compare:", INDUSTRIES, 
+                              default=["Transportation Equipment", "Chemical Products", "Computer & Electronic Products"])
+    
+    if to_track:
+        line_df = df_master[df_master['industry'].isin(to_track)].sort_values('date')
+        fig_line = px.line(line_df, x='date', y='score', color='industry', markers=True,
+                           line_shape='spline', title="Relative Growth/Contraction Trends")
+        st.plotly_chart(fig_line, use_container_width=True)
 
 else:
-    st.error("Failed to load report.")
+    st.error("No data found. Please check the scraper settings or the Source URL.")
 
 with st.sidebar:
-    st.write(f"**Report Link:** [Source]({report_url})")
-    if st.button("Clear Cache & Refresh"):
+    st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
+    st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
+    if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
