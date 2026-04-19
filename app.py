@@ -19,25 +19,25 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# Improved GICS mapping (more complete for yfinance filtering)
-ISM_TO_GICS = {
-    "Transportation Equipment": ["Automobiles", "Auto Components", "Aerospace & Defense"],
-    "Computer & Electronic Products": ["Technology Hardware, Storage & Peripherals", "Semiconductors", "Electronic Equipment, Instruments & Components"],
-    "Chemical Products": ["Chemicals"],
-    "Food, Beverage & Tobacco Products": ["Food Products", "Beverages", "Tobacco"],
-    "Primary Metals": ["Metals & Mining"],
-    "Machinery": ["Machinery"],
-    "Furniture & Related Products": ["Household Durables"],
-    "Petroleum & Coal Products": ["Oil, Gas & Consumable Fuels"],
-    "Electrical Equipment, Appliances & Components": ["Electrical Equipment"],
-    "Textile Mills": ["Textiles, Apparel & Luxury Goods"],
-    "Paper Products": ["Containers & Packaging"],
-    "Plastics & Rubber Products": ["Chemicals"],  # many plastics fall under Chemicals
-    "Nonmetallic Mineral Products": ["Construction Materials"],
-    "Fabricated Metal Products": ["Machinery"],
-    "Miscellaneous Manufacturing": ["Industrial Conglomerates"],
-    "Apparel, Leather & Allied Products": ["Textiles, Apparel & Luxury Goods"],
-    "Printing & Related Support Activities": ["Commercial Services & Supplies"]
+# Robust direct ticker mapping (NYSE + Nasdaq, all > $1B cap)
+ISM_TO_TICKERS = {
+    "Transportation Equipment": ["F", "GM", "TSLA", "HON", "RTX", "LMT", "BA", "NOC", "GD", "UNP", "DE", "CAT", "PCAR"],
+    "Computer & Electronic Products": ["AAPL", "MSFT", "NVDA", "AMD", "INTC", "QCOM", "AVGO", "MU", "AMAT", "TXN", "ADI"],
+    "Chemical Products": ["DOW", "DD", "LYB", "ECL", "PPG", "SHW", "APD", "LIN", "CF", "MOS", "EMN"],
+    "Food, Beverage & Tobacco Products": ["KO", "PEP", "MDLZ", "KHC", "GIS", "STZ", "MNST", "ADM", "TSN", "KDP", "PM", "MO"],
+    "Primary Metals": ["NUE", "X", "CLF", "STLD", "RS", "ATI", "AA", "SCCO"],
+    "Machinery": ["CAT", "DE", "ETN", "HON", "CMI", "IR", "ROP", "AME", "DOV", "PH"],
+    "Furniture & Related Products": ["MHK", "TPX", "LZB", "LEG"],
+    "Petroleum & Coal Products": ["XOM", "CVX", "PSX", "MPC", "VLO", "HFC", "OXY"],
+    "Electrical Equipment, Appliances & Components": ["GE", "EMR", "ETN", "PH", "ROK", "AMT", "HON"],
+    "Textile Mills": ["NWL", "UFI"],
+    "Paper Products": ["IP", "PKG", "AVY", "SEE"],
+    "Plastics & Rubber Products": ["GT", "CCK", "AVY"],
+    "Nonmetallic Mineral Products": ["VMC", "MLM", "EXP", "CX", "SUM"],
+    "Fabricated Metal Products": ["EMR", "PH", "ITW", "FAST"],
+    "Miscellaneous Manufacturing": ["MMM", "GE", "HON", "ITW"],
+    "Apparel, Leather & Allied Products": ["NKE", "VFC", "PVH", "HBI", "LEVI", "COLM"],
+    "Printing & Related Support Activities": ["RRD", "DLX"]
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -52,7 +52,7 @@ def normalize_name(name: str) -> str:
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
-# ====================== SCRAPER ENGINE (your excellent version) ======================
+# ====================== SCRAPER ENGINE ======================
 def parse_report_text(text):
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 0.0
@@ -73,7 +73,6 @@ def parse_report_text(text):
 
 @st.cache_data(ttl=86400)
 def build_historical_dataset():
-    """Your original scraper — unchanged"""
     all_data = []
     archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
     
@@ -118,35 +117,13 @@ def build_historical_dataset():
 
     return pd.DataFrame(all_data)
 
-# ====================== LIVE STOCK LOOKUP (ROBUST VERSION) ======================
-# Expanded and reliable ticker lists per ISM industry (no Wikipedia dependency)
-ISM_TO_TICKERS = {
-    "Transportation Equipment": ["F", "GM", "TSLA", "HON", "RTX", "LMT", "BA", "NOC", "GD", "UNP", "DE", "CAT", "PCAR"],
-    "Computer & Electronic Products": ["AAPL", "MSFT", "NVDA", "AMD", "INTC", "QCOM", "AVGO", "MU", "AMAT", "TXN", "ADI"],
-    "Chemical Products": ["DOW", "DD", "LYB", "ECL", "PPG", "SHW", "APD", "LIN", "CF", "MOS", "EMN"],
-    "Food, Beverage & Tobacco Products": ["KO", "PEP", "MDLZ", "KHC", "GIS", "STZ", "MNST", "ADM", "TSN", "KDP", "PM", "MO"],
-    "Primary Metals": ["NUE", "X", "CLF", "STLD", "RS", "ATI", "AA", "SCCO"],
-    "Machinery": ["CAT", "DE", "ETN", "HON", "CMI", "IR", "ROP", "AME", "DOV", "PH"],
-    "Furniture & Related Products": ["MHK", "TPX", "LZB", "LEG"],
-    "Petroleum & Coal Products": ["XOM", "CVX", "PSX", "MPC", "VLO", "HFC", "OXY"],
-    "Electrical Equipment, Appliances & Components": ["GE", "EMR", "ETN", "PH", "ROK", "AMT", "HON"],
-    "Textile Mills": ["NWL", "UFI"],  # sector is small
-    "Paper Products": ["IP", "PKG", "AVY", "SEE"],
-    "Plastics & Rubber Products": ["GT", "CCK", "AVY"],
-    "Nonmetallic Mineral Products": ["VMC", "MLM", "EXP", "CX", "SUM"],
-    "Fabricated Metal Products": ["EMR", "PH", "ITW", "FAST"],
-    "Miscellaneous Manufacturing": ["MMM", "GE", "HON", "ITW"],
-    "Apparel, Leather & Allied Products": ["NKE", "VFC", "PVH", "HBI", "LEVI", "COLM"],
-    "Printing & Related Support Activities": ["RRD", "DLX"]
-}
-
+# ====================== LIVE STOCK LOOKUP ======================
 @st.cache_data(ttl=3600)
 def get_stocks_for_industry(industry: str):
-    """Live yfinance lookup using direct ticker mapping"""
     tickers = ISM_TO_TICKERS.get(industry, [])
     if not tickers:
-        return pd.DataFrame(columns=["Ticker", "Company", "Market Cap", "Price", "% Change", "Yahoo Link"])
-
+        return pd.DataFrame()
+    
     data = yf.Tickers(" ".join(tickers))
     rows = []
     for t in tickers:
@@ -164,7 +141,6 @@ def get_stocks_for_industry(industry: str):
                 })
         except:
             continue
-    
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
@@ -200,23 +176,20 @@ if not df_master.empty:
 
     with col_info:
         st.write("**Investment Context**")
-        selected_sector = st.selectbox("Select Sector for GICS Mapping:", INDUSTRIES)
-        
-        related_gics = ISM_TO_GICS.get(selected_sector, ["No direct GICS mapping found"])
-        st.info(f"**ISM Sector:** {selected_sector}\n\n**Maps to GICS:**\n" + "\n".join([f"- {g}" for g in related_gics]))
+        selected_sector = st.selectbox("Select Sector for Stock List:", INDUSTRIES)
         
         score_now = current_df[current_df['industry'] == selected_sector]['score'].iloc[0]
         status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
         st.write(f"Current Status: **{status}** ({score_now:+d})")
 
-    # ====================== NEW: LIVE STOCK LIST ======================
+    # ====================== LIVE STOCKS SECTION ======================
     st.divider()
     st.subheader(f"📋 Stocks in **{selected_sector}** (> $1B market cap)")
 
-    stock_df = get_stocks_for_gics(related_gics)
+    stock_df = get_stocks_for_industry(selected_sector)
     
     if not stock_df.empty:
-        st.success(f"Found {len(stock_df)} stocks")
+        st.success(f"Found {len(stock_df)} large-cap stocks")
         st.dataframe(
             stock_df.style.format({"% Change": "{:+.2f}%"}),
             use_container_width=True,
@@ -224,9 +197,9 @@ if not df_master.empty:
         )
         st.caption("💡 Click any Ticker link to open Yahoo Finance")
     else:
-        st.info("No matching large-cap stocks found for this mapping (you can expand ISM_TO_GICS if needed).")
+        st.info("No stocks found for this sector yet (mapping can be expanded).")
 
-    # Historical sections (unchanged)
+    # Historical sections (your original)
     st.divider()
     st.subheader("📈 6-Month Sector Momentum")
     pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
@@ -248,7 +221,7 @@ if not df_master.empty:
         st.plotly_chart(fig_line, use_container_width=True)
 
 else:
-    st.error("No data found.")
+    st.error("No data found. Please check the scraper settings or the Source URL.")
 
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
