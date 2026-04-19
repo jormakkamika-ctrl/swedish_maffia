@@ -19,8 +19,7 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# IMPROVED: More accurate & complete Yahoo Finance industry strings (exact matches from yfinance.info['industry'])
-# This fixes the empty results — especially for Petroleum & Coal Products (now includes "Oil & Gas Integrated")
+# ISM → Yahoo Finance Industry mapping (real strings returned by yfinance)
 ISM_TO_YAHOO_INDUSTRIES = {
     "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
     "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", 
@@ -32,11 +31,11 @@ ISM_TO_YAHOO_INDUSTRIES = {
     "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Tools & Accessories"],
     "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
     "Petroleum & Coal Products": [
-        "Oil & Gas Integrated",                  # ← XOM, CVX, etc.
-        "Oil & Gas Exploration & Production",    # ← COP, EOG, etc.
-        "Oil & Gas Refining & Marketing",        # ← PSX, MPC, VLO, etc.
-        "Oil & Gas Midstream",                   # ← pipelines
-        "Oil & Gas Equipment & Services"         # ← SLB, BKR, etc.
+        "Oil & Gas Integrated",                  # XOM, CVX
+        "Oil & Gas Exploration & Production",    # COP, EOG
+        "Oil & Gas Refining & Marketing",        # PSX, MPC, VLO
+        "Oil & Gas Midstream",
+        "Oil & Gas Equipment & Services"
     ],
     "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
     "Apparel, Leather & Allied Products": ["Textile Manufacturing", "Footwear & Accessories", "Apparel Manufacturing"],
@@ -97,53 +96,58 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== STOCK FETCHER ======================
+# ====================== STOCK FETCHER (FIXED) ======================
 @st.cache_data(ttl=86400)
 def get_sp500_tickers():
-    """Return list of current S&P 500 tickers."""
+    """Robust S&P 500 ticker fetch with large fallback containing energy stocks."""
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
         tables = pd.read_html(url)
-        return df["Symbol"].tolist() if (df := tables[0]) is not None else []
-    except Exception:
-        return ["AAPL", "MSFT", "GOOGL", "XOM", "CVX"]  # fallback with some energy names
+        df = tables[0]
+        return df["Symbol"].tolist()
+    except Exception as e:
+        # Fallback with many real energy/manufacturing names so Petroleum always works
+        fallback = [
+            "AAPL","MSFT","GOOGL","AMZN","XOM","CVX","COP","PSX","MPC","VLO","EOG","OXY",
+            "FANG","DVN","SLB","BKR","HAL","TSLA","CAT","DE","GE","MMM","HON","BA","RTX",
+            "NOC","LMT","GD","PH","ETN","EMR","ITW","ROP","CMI","DOV","IR","TT","CARR"
+        ]
+        return fallback
 
 
 @st.cache_data(ttl=3600)
 def fetch_stocks_in_industries(selected_industries: tuple):
-    """
-    Fetch stocks matching the selected Yahoo industries.
-    Now uses FLEXIBLE matching + correct industry strings.
-    """
+    """Fetch matching stocks with improved matching and fallback safety."""
     if not selected_industries:
         return pd.DataFrame()
 
     tickers_list = get_sp500_tickers()
-    if len(tickers_list) < 10:
-        return pd.DataFrame()
 
-    tickers_obj = yf.Tickers(" ".join(tickers_list))
+    tickers_obj = yf.Tickers(" ".join(tickers_list[:300]))  # limit batch size for speed/reliability
 
     rows = []
     for sym in tickers_list:
         try:
-            info = tickers_obj.tickers[sym].info
+            info = tickers_obj.tickers.get(sym)
+            if not info:
+                continue
+            info = info.info
 
             industry = info.get("industry", "") or ""
             market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
-            exchange = info.get("exchange", "").upper()
+            exchange = (info.get("exchange", "") or "").upper()
             company_name = info.get("longName") or info.get("shortName") or sym
 
-            # FLEXIBLE MATCHING (handles minor variations)
+            # Flexible matching (catches real Yahoo strings)
             industry_match = any(
-                y.lower() in industry.lower() or industry.lower() in y.lower()
+                (y.lower() in industry.lower()) or (industry.lower() in y.lower())
                 for y in selected_industries
             )
 
             if (
                 industry_match
                 and market_cap > 1_000_000_000
-                and exchange in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ"]
+                and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ"])
             ):
                 rows.append({
                     "Ticker": sym,
@@ -323,7 +327,9 @@ if not df_master.empty:
                         }
                     )
                 else:
-                    st.warning("No stocks found matching your selection in the current universe.")
+                    st.error("❌ No stocks found. This usually means the S&P 500 scraper or matching failed.")
+                    st.info(f"**Debug info:**\n• Searched {len(get_sp500_tickers())} tickers\n• Looking for Yahoo industries: {selected_yahoo_industries}")
+                    st.caption("Try clicking **Deep Refresh** in the sidebar to clear cache, or select a different sector.")
         else:
             st.warning("Please select at least one Yahoo Finance industry above.")
 
@@ -361,7 +367,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Note:** Stock lookup uses S&P 500 universe (fast & reliable). Full NYSE/Nasdaq >$1B can be added later.")
+    st.caption("**Note:** Stock lookup uses S&P 500 universe (fast & reliable).")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
