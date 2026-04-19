@@ -279,46 +279,31 @@ def parse_ism_subcomponents(text: str) -> dict:
 # ====================== STOCK UNIVERSE ======================
 @st.cache_data(ttl=86400)
 def get_all_nyse_nasdaq_tickers():
-    """Robust version that handles flaky Nasdaq CSVs and returns thousands of tickers."""
-    tickers = set()
-    urls = [
-        "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/nasdaqtraded.txt",
-        "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/otherlisted.txt"
-    ]
-    for url in urls:
-        try:
-            df = pd.read_csv(url, sep='|', on_bad_lines='skip', header=0)
-            # Handle different column names across the two files
-            if 'Symbol' in df.columns:
-                symbol_col = 'Symbol'
-            elif df.columns[0] == 'Symbol':
-                symbol_col = df.columns[0]
-            else:
-                symbol_col = df.columns[0]  # fallback
-            
-            clean = df[symbol_col].astype(str).str.strip()
-            clean = clean[~clean.str.contains(r'[\.\^]', regex=True)]
-            if 'ETF' in df.columns:
-                clean = clean[df['ETF'] == 'N']
-            tickers.update(clean.tolist())
-        except Exception as e:
-            st.warning(f"⚠️ Nasdaq fetch warning: {str(e)[:80]}")
-            continue
-    return sorted(list(tickers))
+    """Reliable GitHub mirror — works on Streamlit Cloud."""
+    try:
+        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all_symbols.txt"
+        df = pd.read_csv(url, header=None, names=["Symbol"])
+        tickers = df["Symbol"].astype(str).str.strip().tolist()
+        # Clean invalid symbols
+        tickers = [t for t in tickers if t and not any(c in t for c in [".", "^", "/", "\\"])]
+        st.info(f"✅ Loaded {len(tickers):,} US tickers from stable GitHub mirror")
+        return sorted(tickers)
+    except Exception as e:
+        st.error(f"⚠️ Could not load ticker list: {str(e)[:100]}")
+        return []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Fixed & robust version — works on Streamlit Cloud."""
+    """Robust batched fetch using the stable ticker list."""
     tickers_list = get_all_nyse_nasdaq_tickers()
-    st.info(f"✅ Loaded {len(tickers_list):,} tickers from Nasdaq directories")
 
-    if len(tickers_list) < 1000:
-        st.warning("⚠️ Smaller ticker list than expected — still proceeding with available data.")
+    if len(tickers_list) < 5000:
+        st.warning("⚠️ Ticker list smaller than expected — still proceeding.")
 
     batch_size = 50
     rows = []
-    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe... (first run ~60–90s)")
+    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)... (first run ~60–90s)")
 
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i:i + batch_size]
@@ -330,6 +315,7 @@ def get_full_stock_universe():
                     if not info:
                         continue
                     info = info.info
+
                     industry = info.get("industry", "") or ""
                     market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
                     exchange = (info.get("exchange", "") or "").upper()
@@ -351,7 +337,7 @@ def get_full_stock_universe():
             continue
 
         progress = min((i + batch_size) / len(tickers_list), 1.0)
-        progress_bar.progress(progress, text=f"Found {len(rows)} qualifying stocks so far...")
+        progress_bar.progress(progress, text=f"Found {len(rows):,} qualifying stocks so far...")
 
     progress_bar.empty()
 
@@ -359,9 +345,9 @@ def get_full_stock_universe():
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
-        st.success(f"✅ Built universe with {len(df):,} stocks (> $1B market cap)")
+        st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
     else:
-        st.error("❌ Still no stocks — please try 'Deep Refresh' once.")
+        st.error("❌ No stocks found — please try 'Deep Refresh' once.")
 
     return df
 
