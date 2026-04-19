@@ -277,10 +277,10 @@ def parse_ism_subcomponents(text: str) -> dict:
             sub["Prices"] = {"current": float(p_match.group(1)), "change": float(p_match.group(2)), "trend": int(p_match.group(3))}
     return sub
 
-# ====================== TICKER LOADER (must come BEFORE the universe function) ======================
+# ====================== TICKER LOADER ======================
 @st.cache_data(ttl=86400)
 def get_all_nyse_nasdaq_tickers():
-    """Ultra-robust ticker loader — uses requests + line split (no pandas NaN issues)."""
+    """Same reliable source, but with a bit more defensive parsing."""
     try:
         url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all/all_tickers.txt"
         response = requests.get(url, headers=HEADERS, timeout=15)
@@ -288,45 +288,54 @@ def get_all_nyse_nasdaq_tickers():
         
         tickers = []
         for line in response.text.splitlines():
-            t = line.strip()
-            if t and not any(c in t for c in [".", "^", "/", "\\", " ", "\t"]):
+            t = line.strip().upper()
+            if t and not any(c in t for c in [".", "^", "/", "\\", " ", "\t", "-"]):
                 tickers.append(t)
         
-        st.info(f"✅ Loaded {len(tickers):,} total US tickers (NASDAQ + NYSE + AMEX)")
+        st.info(f"✅ Loaded {len(tickers):,} total US tickers")
         return sorted(tickers)
     except Exception as e:
-        st.error(f"⚠️ Ticker list failed to load: {str(e)[:120]}")
+        st.error(f"⚠️ Ticker list failed: {str(e)[:150]}")
         return []
 
 
-# ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_full_stock_universe():
-    """FastInfo version — the reliable way on Streamlit Cloud."""
-    tickers_list = get_all_nyse_nasdaq_tickers()[:5000]   # limit for speed on first run
+# ====================== FULL STOCK UNIVERSE (fixed) ======================
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_full_stock_universe(max_tickers: int = 8000):
+    """Improved version: more reliable, better error handling, slightly faster."""
+    tickers_list = get_all_nyse_nasdaq_tickers()[:max_tickers]
 
     rows = []
-    progress_bar = st.progress(0, text="Fetching universe (> $1B)... (first run ~2–4 min)")
+    progress_bar = st.progress(0, text=f"Building universe (> $1B) — {len(tickers_list):,} tickers...")
 
-    valid_marketcap_count = 0
+    success_count = 0
+    fail_count = 0
 
     for idx, sym in enumerate(tickers_list):
         try:
             ticker = yf.Ticker(sym)
-            fast_info = ticker.fast_info   # ← this is the key change
+            info = ticker.info                    # primary source (most reliable)
+            fast_info = ticker.fast_info          # fallback for marketCap
 
-            market_cap = fast_info.get('marketCap') or fast_info.get('market_cap') or 0
+            market_cap = (
+                info.get("marketCap")
+                or fast_info.get("marketCap")
+                or fast_info.get("market_cap")
+                or 0
+            )
 
             if market_cap > 1_000_000_000:
-                valid_marketcap_count += 1
-
-                # Get the rest of the data
-                info = ticker.info
+                company_name = (
+                    info.get("longName")
+                    or info.get("shortName")
+                    or sym
+                )
                 industry = info.get("industry", "") or ""
-                exchange = (info.get("exchange", "") or "").upper()
-                company_name = info.get("longName") or info.get("shortName") or sym
+                exchange = str(info.get("exchange", "")).upper()
 
-                if any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
+                # More robust exchange filter (NYQ = NYSE, NMS = NASDAQ, etc.)
+                valid_exchange_keywords = {"NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX", "NASDAQGS", "NASDAQGM"}
+                if any(kw in exchange for kw in valid_exchange_keywords):
                     rows.append({
                         "Ticker": sym,
                         "Company": company_name,
@@ -334,29 +343,37 @@ def get_full_stock_universe():
                         "Market Cap": market_cap,
                         "Exchange": exchange
                     })
-        except:
+                    success_count += 1
+
+        except Exception as e:
+            fail_count += 1
+            # Only show warnings occasionally so UI doesn't get spammy
+            if fail_count % 100 == 0:
+                st.warning(f"⚠️ {fail_count} tickers failed so far (recent: {sym} — {type(e).__name__})")
             continue
 
-        # Progress update every 10 tickers
-        if idx % 10 == 0 or idx == len(tickers_list) - 1:
+        # Progress update (every 25 tickers for smoother UI)
+        if idx % 25 == 0 or idx == len(tickers_list) - 1:
             progress = (idx + 1) / len(tickers_list)
-            progress_bar.progress(progress, text=f"Processed {idx+1:,} tickers | Found {len(rows):,} stocks so far...")
+            progress_bar.progress(
+                progress,
+                text=f"Processed {idx+1:,}/{len(tickers_list):,} | Found {len(rows):,} stocks | Failed: {fail_count}"
+            )
 
-        time.sleep(0.30)
+        time.sleep(0.22)   # Slightly more conservative than 0.30 to reduce throttling
 
     progress_bar.empty()
 
-    st.info(f"**Debug Summary** → Valid >$1B market caps found: {valid_marketcap_count:,} | Final stocks kept: {len(rows):,}")
+    st.success(f"✅ Universe built: **{len(rows):,} stocks** (> $1B market cap) | Failed: {fail_count}")
 
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("Market Cap", ascending=False)
+    if rows:
+        df = pd.DataFrame(rows)
+        df = df.sort_values("Market Cap", ascending=False).reset_index(drop=True)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
-        st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
+        return df
     else:
-        st.error("❌ Still no stocks — see Debug Summary above.")
-
-    return df
+        st.error("❌ No stocks found — check rate limits or internet connection.")
+        return pd.DataFrame()
 
 # ====================== SCRAPER ======================
 def parse_report_text(text: str):
