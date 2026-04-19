@@ -19,7 +19,7 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# ISM → Yahoo Finance Industry mapping (real strings returned by yfinance)
+# PURE Yahoo Finance industry strings (exact matches from ticker.info['industry'])
 ISM_TO_YAHOO_INDUSTRIES = {
     "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
     "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", 
@@ -31,9 +31,9 @@ ISM_TO_YAHOO_INDUSTRIES = {
     "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Tools & Accessories"],
     "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
     "Petroleum & Coal Products": [
-        "Oil & Gas Integrated",                  # XOM, CVX
-        "Oil & Gas Exploration & Production",    # COP, EOG
-        "Oil & Gas Refining & Marketing",        # PSX, MPC, VLO
+        "Oil & Gas Integrated",
+        "Oil & Gas Exploration & Production",
+        "Oil & Gas Refining & Marketing",
         "Oil & Gas Midstream",
         "Oil & Gas Equipment & Services"
     ],
@@ -96,34 +96,61 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== STOCK FETCHER (FIXED) ======================
+# ====================== FULL NYSE + NASDAQ TICKER UNIVERSE ======================
 @st.cache_data(ttl=86400)
-def get_sp500_tickers():
-    """Robust S&P 500 ticker fetch with large fallback containing energy stocks."""
-    try:
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url)
-        df = tables[0]
-        return df["Symbol"].tolist()
-    except Exception as e:
-        # Fallback with many real energy/manufacturing names so Petroleum always works
-        fallback = [
-            "AAPL","MSFT","GOOGL","AMZN","XOM","CVX","COP","PSX","MPC","VLO","EOG","OXY",
-            "FANG","DVN","SLB","BKR","HAL","TSLA","CAT","DE","GE","MMM","HON","BA","RTX",
-            "NOC","LMT","GD","PH","ETN","EMR","ITW","ROP","CMI","DOV","IR","TT","CARR"
-        ]
-        return fallback
+def get_all_nyse_nasdaq_tickers():
+    """
+    Fetch EVERY active common stock from NYSE + NASDAQ using official NasdaqTrader directories.
+    Returns clean list of tickers (common stocks only, no ETFs, no test symbols, etc.).
+    """
+    tickers = set()
+
+    # Official NasdaqTrader files (very reliable)
+    urls = [
+        "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/nasdaqtraded.txt",
+        "https://www.nasdaqtrader.com/content/technicalsupport/SymbolDirectory/otherlisted.txt"
+    ]
+
+    for url in urls:
+        try:
+            df = pd.read_csv(url, sep='|', on_bad_lines='skip')
+            # Keep only common stocks (usually column 'ETF' == 'N' or 'Security Type' == 'Common Stock')
+            if 'ETF' in df.columns:
+                df = df[df['ETF'] == 'N']
+            if 'Security Type' in df.columns:
+                df = df[df['Security Type'].str.contains('Common Stock', na=False)]
+            
+            # Clean symbol column (first column is usually 'Symbol' or 'ACT Symbol')
+            symbol_col = 'Symbol' if 'Symbol' in df.columns else df.columns[0]
+            clean_symbols = df[symbol_col].astype(str).str.strip()
+            # Remove any test symbols, preferred shares, etc.
+            clean_symbols = clean_symbols[
+                ~clean_symbols.str.contains(r'[\.\^]', regex=True) &  # no . or ^
+                ~clean_symbols.str.endswith(('.P', '.Q', '.U', '.W'))  # no preferred, etc.
+            ]
+            tickers.update(clean_symbols.tolist())
+        except Exception:
+            continue  # if one source fails, try the next
+
+    # Final unique list, sorted
+    return sorted(list(tickers))
 
 
+# ====================== STOCK FETCHER (FULL NYSE + NASDAQ) ======================
 @st.cache_data(ttl=3600)
 def fetch_stocks_in_industries(selected_industries: tuple):
-    """Fetch matching stocks with improved matching and fallback safety."""
+    """
+    FULL NYSE + NASDAQ universe.
+    Pure Yahoo Finance matching – no fallbacks, no S&P 500 limit.
+    This will return EVERY qualifying company (MC > $1B) in the selected Yahoo industries.
+    """
     if not selected_industries:
         return pd.DataFrame()
 
-    tickers_list = get_sp500_tickers()
+    tickers_list = get_all_nyse_nasdaq_tickers()
 
-    tickers_obj = yf.Tickers(" ".join(tickers_list[:300]))  # limit batch size for speed/reliability
+    # Large batch – first run will take ~60-120 seconds, then cached
+    tickers_obj = yf.Tickers(" ".join(tickers_list))
 
     rows = []
     for sym in tickers_list:
@@ -138,7 +165,7 @@ def fetch_stocks_in_industries(selected_industries: tuple):
             exchange = (info.get("exchange", "") or "").upper()
             company_name = info.get("longName") or info.get("shortName") or sym
 
-            # Flexible matching (catches real Yahoo strings)
+            # Pure Yahoo industry matching
             industry_match = any(
                 (y.lower() in industry.lower()) or (industry.lower() in y.lower())
                 for y in selected_industries
@@ -295,7 +322,7 @@ if not df_master.empty:
         selected_yahoo_industries = st.multiselect(
             "Tick the ones you want to explore:",
             options=related_yahoo,
-            default=related_yahoo[:2] if len(related_yahoo) > 1 else related_yahoo,
+            default=related_yahoo[:3] if len(related_yahoo) > 1 else related_yahoo,
             key="yahoo_select"
         )
 
@@ -306,13 +333,13 @@ if not df_master.empty:
         else:
             st.info("No respondent comments available for this report.")
 
-    # === STOCKS SECTION ===
+    # === STOCKS SECTION – FULL NYSE + NASDAQ ===
     st.subheader("📊 Stocks in Selected Yahoo Industries")
-    st.caption("Filtered to NYSE/Nasdaq companies with Market Cap > $1 Billion (S&P 500 universe)")
+    st.caption("**FULL NYSE + NASDAQ** • Pure Yahoo Finance pull • Market Cap > $1 Billion")
 
     if st.button("🔍 Fetch Stocks (> $1B Market Cap)", type="primary", use_container_width=True):
         if selected_yahoo_industries:
-            with st.spinner("Fetching latest stock data from Yahoo Finance..."):
+            with st.spinner("Fetching from FULL NYSE + NASDAQ universe (~10,000+ tickers)...\nFirst run may take 60–120 seconds"):
                 stocks_df = fetch_stocks_in_industries(tuple(selected_yahoo_industries))
                 
                 if not stocks_df.empty:
@@ -327,9 +354,7 @@ if not df_master.empty:
                         }
                     )
                 else:
-                    st.error("❌ No stocks found. This usually means the S&P 500 scraper or matching failed.")
-                    st.info(f"**Debug info:**\n• Searched {len(get_sp500_tickers())} tickers\n• Looking for Yahoo industries: {selected_yahoo_industries}")
-                    st.caption("Try clicking **Deep Refresh** in the sidebar to clear cache, or select a different sector.")
+                    st.error("❌ No stocks found for the selected industries.")
         else:
             st.warning("Please select at least one Yahoo Finance industry above.")
 
@@ -367,7 +392,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Note:** Stock lookup uses S&P 500 universe (fast & reliable).")
+    st.caption("**Full NYSE + NASDAQ mode** – every qualifying company with MC > $1B.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
