@@ -1,3 +1,4 @@
+HTML<FILE filename="app.py" size="12485 bytes">
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -19,16 +20,25 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# ISM → Yahoo Finance Industry mapping (exact strings from ticker.info['industry'])
+# IMPROVED: More accurate & complete Yahoo Finance industry strings (exact matches from yfinance.info['industry'])
+# This fixes the empty results — especially for Petroleum & Coal Products (now includes "Oil & Gas Integrated")
 ISM_TO_YAHOO_INDUSTRIES = {
-    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts"],
-    "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", "Communication Equipment", "Semiconductor Equipment & Materials"],
+    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
+    "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", 
+                                      "Communication Equipment", "Semiconductor Equipment & Materials"],
     "Chemical Products": ["Chemicals", "Specialty Chemicals"],
-    "Food, Beverage & Tobacco Products": ["Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers", "Tobacco"],
+    "Food, Beverage & Tobacco Products": ["Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers", 
+                                         "Tobacco", "Confectioners"],
     "Primary Metals": ["Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining"],
     "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Tools & Accessories"],
     "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
-    "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Exploration & Production"],
+    "Petroleum & Coal Products": [
+        "Oil & Gas Integrated",                  # ← XOM, CVX, etc.
+        "Oil & Gas Exploration & Production",    # ← COP, EOG, etc.
+        "Oil & Gas Refining & Marketing",        # ← PSX, MPC, VLO, etc.
+        "Oil & Gas Midstream",                   # ← pipelines
+        "Oil & Gas Equipment & Services"         # ← SLB, BKR, etc.
+    ],
     "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
     "Apparel, Leather & Allied Products": ["Textile Manufacturing", "Footwear & Accessories", "Apparel Manufacturing"],
     "Wood Products": ["Lumber & Wood Production"],
@@ -55,10 +65,6 @@ NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
 
 def get_respondent_comments(text: str) -> list[str]:
-    """
-    Extracts the bullet-point comments from the 'WHAT RESPONDENTS ARE SAYING' section.
-    Preserves original bullet formatting from PR Newswire reports.
-    """
     section_match = re.search(
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management®|©|ISM® Reports|Report Issued|$))",
         text,
@@ -92,24 +98,23 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== STOCK FETCHER (NEW) ======================
+# ====================== STOCK FETCHER ======================
 @st.cache_data(ttl=86400)
 def get_sp500_tickers():
-    """Return list of current S&P 500 tickers (solid high-quality universe for >$1B companies)."""
+    """Return list of current S&P 500 tickers."""
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
         tables = pd.read_html(url)
-        df = tables[0]
-        return df["Symbol"].tolist()
+        return df["Symbol"].tolist() if (df := tables[0]) is not None else []
     except Exception:
-        return ["AAPL", "MSFT", "GOOGL"]  # fallback
+        return ["AAPL", "MSFT", "GOOGL", "XOM", "CVX"]  # fallback with some energy names
 
 
 @st.cache_data(ttl=3600)
 def fetch_stocks_in_industries(selected_industries: tuple):
     """
-    Fetch stocks from S&P 500 universe that match the selected Yahoo industries.
-    Filters: Market Cap > $1B, listed on NYSE or Nasdaq.
+    Fetch stocks matching the selected Yahoo industries.
+    Now uses FLEXIBLE matching + correct industry strings.
     """
     if not selected_industries:
         return pd.DataFrame()
@@ -118,7 +123,6 @@ def fetch_stocks_in_industries(selected_industries: tuple):
     if len(tickers_list) < 10:
         return pd.DataFrame()
 
-    # Batch fetch using yf.Tickers (much faster than individual calls)
     tickers_obj = yf.Tickers(" ".join(tickers_list))
 
     rows = []
@@ -126,16 +130,21 @@ def fetch_stocks_in_industries(selected_industries: tuple):
         try:
             info = tickers_obj.tickers[sym].info
 
-            industry = info.get("industry", "")
+            industry = info.get("industry", "") or ""
             market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
             exchange = info.get("exchange", "").upper()
             company_name = info.get("longName") or info.get("shortName") or sym
 
-            # Filter criteria
+            # FLEXIBLE MATCHING (handles minor variations)
+            industry_match = any(
+                y.lower() in industry.lower() or industry.lower() in y.lower()
+                for y in selected_industries
+            )
+
             if (
-                industry in selected_industries
+                industry_match
                 and market_cap > 1_000_000_000
-                and exchange in ["NYSE", "NYQ", "NMS", "NASD"]
+                and exchange in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ"]
             ):
                 rows.append({
                     "Ticker": sym,
@@ -145,12 +154,11 @@ def fetch_stocks_in_industries(selected_industries: tuple):
                     "Exchange": exchange
                 })
         except:
-            continue  # skip any ticker that fails
+            continue
 
     df = pd.DataFrame(rows)
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
-        # Pretty formatting
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
     return df
 
@@ -179,7 +187,6 @@ def parse_report_text(text):
 
 @st.cache_data(ttl=86400)
 def build_historical_dataset():
-    """Scrapes the PR Newswire newsroom to build a 6-month historical window + respondent comments."""
     all_data = []
     report_metadata = {}
     
@@ -253,11 +260,9 @@ if not df_master.empty:
     report_url = latest_meta.get("url", current_df['url'].iloc[0])
     comments_list = latest_meta.get("comments", [])
 
-    # --- TOP METRIC ---
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
     st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs 50.0 Neutral")
 
-    # --- HEATMAP TABLE + INVESTMENT CONTEXT ---
     col_table, col_info = st.columns([2, 1])
     
     with col_table:
@@ -283,7 +288,6 @@ if not df_master.empty:
         status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
         st.write(f"Current Status: **{status}** ({score_now:+d})")
 
-        # === NEW: Select Yahoo Industries for stock lookup ===
         st.write("**Select Yahoo Industries to Analyze**")
         selected_yahoo_industries = st.multiselect(
             "Tick the ones you want to explore:",
@@ -292,7 +296,6 @@ if not df_master.empty:
             key="yahoo_select"
         )
 
-    # === FULL-WIDTH EXPANDABLE SECTION ===
     st.divider()
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
@@ -300,13 +303,13 @@ if not df_master.empty:
         else:
             st.info("No respondent comments available for this report.")
 
-    # === NEW FULL-WIDTH STOCKS SECTION ===
+    # === STOCKS SECTION ===
     st.subheader("📊 Stocks in Selected Yahoo Industries")
     st.caption("Filtered to NYSE/Nasdaq companies with Market Cap > $1 Billion (S&P 500 universe)")
 
     if st.button("🔍 Fetch Stocks (> $1B Market Cap)", type="primary", use_container_width=True):
         if selected_yahoo_industries:
-            with st.spinner("Fetching latest stock data from Yahoo Finance... (first run may take 20–40 seconds)"):
+            with st.spinner("Fetching latest stock data from Yahoo Finance..."):
                 stocks_df = fetch_stocks_in_industries(tuple(selected_yahoo_industries))
                 
                 if not stocks_df.empty:
@@ -327,7 +330,6 @@ if not df_master.empty:
 
     # --- HISTORICAL TREND HEATMAP ---
     st.subheader("📈 6-Month Sector Momentum")
-    
     pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
     pivot = pivot.reindex(INDUSTRIES)
     pivot.columns = pivot.columns.strftime('%b %Y')
