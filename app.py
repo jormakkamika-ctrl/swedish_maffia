@@ -92,9 +92,9 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== FINAL ROBUST SUB-INDEX PARSER ======================
+# ====================== FINAL STRONG SUB-INDEX PARSER ======================
 def parse_ism_subcomponents(text: str) -> dict:
-    """Ultra-robust parser that works on the real flattened March 2026 table."""
+    """Extremely robust parser for the MANUFACTURING AT A GLANCE table."""
     sub = {
         "New Orders": {"current": None, "change": None, "trend": None},
         "Production": {"current": None, "change": None, "trend": None},
@@ -104,39 +104,47 @@ def parse_ism_subcomponents(text: str) -> dict:
     }
 
     for key in sub.keys():
-        # 1. Find current value (first number after the key)
-        current_match = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
-        if current_match:
-            sub[key]["current"] = float(current_match.group(1))
+        # 1. Current value (first number after key)
+        cur = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
+        if cur:
+            sub[key]["current"] = float(cur.group(1))
 
-        # 2. Find MoM change (the +/- number that follows the current value)
-        change_match = re.search(rf"{re.escape(key)}\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
-        if change_match:
-            sub[key]["change"] = float(change_match.group(1))
+        # 2. MoM change (the +/- number that follows)
+        chg = re.search(rf"{re.escape(key)}\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
+        if chg:
+            sub[key]["change"] = float(chg.group(1))
 
-        # 3. Find trend months (the last number in the row – usually the final digit sequence after the key)
-        trend_match = re.search(rf"{re.escape(key)}.*?(\d+)\s*$", text, re.IGNORECASE | re.DOTALL)
-        if trend_match:
-            sub[key]["trend"] = int(trend_match.group(1))
+        # 3. Trend months (the last number in the row)
+        tr = re.search(rf"{re.escape(key)}.*?\s+(\d+)\s*$", text, re.IGNORECASE | re.DOTALL)
+        if tr:
+            sub[key]["trend"] = int(tr.group(1))
 
-    # Special fallback for "Prices" / "Prices Paid"
-    if sub["Prices"]["current"] is None:
-        p_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
-        if p_match:
-            sub["Prices"]["current"] = float(p_match.group(1))
-
-    # Special fallback for "Backlog of Orders"
-    if sub["Backlog of Orders"]["current"] is None:
-        b_match = re.search(r"Backlog of Orders\s*(\d+\.\d+)", text, re.IGNORECASE)
-        if b_match:
-            sub["Backlog of Orders"]["current"] = float(b_match.group(1))
-
-    # Final safety: if we have current but no change, try one more broad search for the next +/- number after current
+    # Extra broad fallbacks
     for key in sub.keys():
-        if sub[key]["current"] is not None and sub[key]["change"] is None:
-            broad_change = re.search(r"([+-]?\d+\.\d+)", text[text.find(key):text.find(key)+120])
-            if broad_change:
-                sub[key]["change"] = float(broad_change.group(1))
+        if sub[key]["current"] is None:
+            broad_cur = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
+            if broad_cur:
+                sub[key]["current"] = float(broad_cur.group(1))
+        if sub[key]["change"] is None and sub[key]["current"] is not None:
+            broad_chg = re.search(r"([+-]?\d+\.\d+)", text[text.find(key):text.find(key)+150])
+            if broad_chg:
+                sub[key]["change"] = float(broad_chg.group(1))
+        if sub[key]["trend"] is None and sub[key]["current"] is not None:
+            broad_tr = re.search(r"\d+\s*$", text[text.find(key):text.find(key)+200])
+            if broad_tr:
+                sub[key]["trend"] = int(broad_tr.group(0).strip())
+
+    # Prices Paid fallback
+    if sub["Prices"]["current"] is None:
+        p = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
+        if p:
+            sub["Prices"]["current"] = float(p.group(1))
+
+    # Backlog of Orders fallback
+    if sub["Backlog of Orders"]["current"] is None:
+        b = re.search(r"Backlog of Orders\s*(\d+\.\d+)", text, re.IGNORECASE)
+        if b:
+            sub["Backlog of Orders"]["current"] = float(b.group(1))
 
     return sub
 
@@ -310,7 +318,7 @@ if not df_master.empty:
 
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # === COMPACT SUB-INDICES (now guaranteed to show change/trend) ===
+    # === COMPACT SUB-INDICES WITH MoM CHANGE + TREND ===
     metric_cols = st.columns(5)
     keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
     labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
@@ -431,7 +439,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Sub-indices parser now fully robust** – Backlog of Orders and change/trend should appear.")
+    st.caption("**Sub-indices parser strengthened** – MoM change + trend should now appear.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
