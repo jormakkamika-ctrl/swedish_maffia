@@ -118,49 +118,48 @@ def build_historical_dataset():
 
     return pd.DataFrame(all_data)
 
-# ====================== LIVE STOCK LOOKUP (new) ======================
-@st.cache_data(ttl=3600)  # 1 hour cache
-def get_large_cap_stocks():
-    """Download S&P 500 tickers (excellent proxy for >$1B MC) + their GICS info"""
-    try:
-        # Standard way to get current S&P 500 list
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url)
-        sp500 = tables[0][['Symbol', 'GICS Sector', 'GICS Sub Industry']]
-        sp500.columns = ['Ticker', 'Sector', 'Industry']
-        return sp500
-    except:
-        st.warning("Could not fetch S&P 500 list — using fallback")
-        return pd.DataFrame()
+# ====================== LIVE STOCK LOOKUP (ROBUST VERSION) ======================
+# Expanded and reliable ticker lists per ISM industry (no Wikipedia dependency)
+ISM_TO_TICKERS = {
+    "Transportation Equipment": ["F", "GM", "TSLA", "HON", "RTX", "LMT", "BA", "NOC", "GD", "UNP", "DE", "CAT", "PCAR"],
+    "Computer & Electronic Products": ["AAPL", "MSFT", "NVDA", "AMD", "INTC", "QCOM", "AVGO", "MU", "AMAT", "TXN", "ADI"],
+    "Chemical Products": ["DOW", "DD", "LYB", "ECL", "PPG", "SHW", "APD", "LIN", "CF", "MOS", "EMN"],
+    "Food, Beverage & Tobacco Products": ["KO", "PEP", "MDLZ", "KHC", "GIS", "STZ", "MNST", "ADM", "TSN", "KDP", "PM", "MO"],
+    "Primary Metals": ["NUE", "X", "CLF", "STLD", "RS", "ATI", "AA", "SCCO"],
+    "Machinery": ["CAT", "DE", "ETN", "HON", "CMI", "IR", "ROP", "AME", "DOV", "PH"],
+    "Furniture & Related Products": ["MHK", "TPX", "LZB", "LEG"],
+    "Petroleum & Coal Products": ["XOM", "CVX", "PSX", "MPC", "VLO", "HFC", "OXY"],
+    "Electrical Equipment, Appliances & Components": ["GE", "EMR", "ETN", "PH", "ROK", "AMT", "HON"],
+    "Textile Mills": ["NWL", "UFI"],  # sector is small
+    "Paper Products": ["IP", "PKG", "AVY", "SEE"],
+    "Plastics & Rubber Products": ["GT", "CCK", "AVY"],
+    "Nonmetallic Mineral Products": ["VMC", "MLM", "EXP", "CX", "SUM"],
+    "Fabricated Metal Products": ["EMR", "PH", "ITW", "FAST"],
+    "Miscellaneous Manufacturing": ["MMM", "GE", "HON", "ITW"],
+    "Apparel, Leather & Allied Products": ["NKE", "VFC", "PVH", "HBI", "LEVI", "COLM"],
+    "Printing & Related Support Activities": ["RRD", "DLX"]
+}
 
 @st.cache_data(ttl=3600)
-def get_stocks_for_gics(gics_list):
-    """Return live stock data for companies in the selected GICS sectors"""
-    sp500 = get_large_cap_stocks()
-    if sp500.empty:
-        return pd.DataFrame()
-    
-    # Filter by GICS sector
-    mask = sp500['Sector'].isin(gics_list)
-    tickers = sp500[mask]['Ticker'].tolist()
-    
+def get_stocks_for_industry(industry: str):
+    """Live yfinance lookup using direct ticker mapping"""
+    tickers = ISM_TO_TICKERS.get(industry, [])
     if not tickers:
-        return pd.DataFrame()
-    
-    # Batch fetch live info
+        return pd.DataFrame(columns=["Ticker", "Company", "Market Cap", "Price", "% Change", "Yahoo Link"])
+
     data = yf.Tickers(" ".join(tickers))
     rows = []
     for t in tickers:
         try:
             info = data.tickers[t].info
-            market_cap = info.get('marketCap', 0)
+            market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
             if market_cap > 1_000_000_000:
                 rows.append({
                     "Ticker": t,
-                    "Company": info.get('longName', t),
+                    "Company": info.get("longName", t),
                     "Market Cap": f"${market_cap/1e9:.1f}B",
-                    "Price": info.get('currentPrice', info.get('regularMarketPrice', 0)),
-                    "% Change": info.get('regularMarketChangePercent', 0),
+                    "Price": round(info.get("currentPrice") or info.get("regularMarketPrice") or 0, 2),
+                    "% Change": round(info.get("regularMarketChangePercent") or 0, 2),
                     "Yahoo Link": f"https://finance.yahoo.com/quote/{t}"
                 })
         except:
