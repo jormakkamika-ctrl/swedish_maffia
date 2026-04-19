@@ -302,41 +302,48 @@ def get_all_nyse_nasdaq_tickers():
 # ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Single-ticker version — most reliable on Streamlit Cloud."""
-    tickers_list = get_all_nyse_nasdaq_tickers()
+    """Debug + limited version — processes only first 4000 tickers for speed & reliability."""
+    tickers_list = get_all_nyse_nasdaq_tickers()[:4000]   # ← limit to speed it up
 
     rows = []
-    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)... (this may take 4–6 min first time)")
+    progress_bar = st.progress(0, text="Fetching universe (> $1B)... (first run ~2–4 min)")
+
+    valid_marketcap_count = 0
 
     for idx, sym in enumerate(tickers_list):
         try:
             ticker = yf.Ticker(sym)
             info = ticker.info
 
-            industry = info.get("industry", "") or ""
             market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
-            exchange = (info.get("exchange", "") or "").upper()
-            company_name = info.get("longName") or info.get("shortName") or sym
+            if market_cap > 1_000_000_000:
+                valid_marketcap_count += 1
 
-            if market_cap > 1_000_000_000 and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
-                rows.append({
-                    "Ticker": sym,
-                    "Company": company_name,
-                    "Yahoo Industry": industry,
-                    "Market Cap": market_cap,
-                    "Exchange": exchange
-                })
+                industry = info.get("industry", "") or ""
+                exchange = (info.get("exchange", "") or "").upper()
+                company_name = info.get("longName") or info.get("shortName") or sym
+
+                if any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
+                    rows.append({
+                        "Ticker": sym,
+                        "Company": company_name,
+                        "Yahoo Industry": industry,
+                        "Market Cap": market_cap,
+                        "Exchange": exchange
+                    })
         except:
             continue
 
-        # Update progress
-        if idx % 50 == 0 or idx == len(tickers_list) - 1:
+        # Frequent progress + debug
+        if idx % 20 == 0 or idx == len(tickers_list) - 1:
             progress = (idx + 1) / len(tickers_list)
-            progress_bar.progress(progress, text=f"Found {len(rows):,} qualifying stocks so far...")
+            progress_bar.progress(progress, text=f"Processed {idx+1:,} tickers | Found {len(rows):,} qualifying stocks so far...")
 
-        time.sleep(0.35)   # polite delay to avoid rate limits
+        time.sleep(0.32)
 
     progress_bar.empty()
+
+    st.info(f"**Debug Summary** → Valid >$1B market caps found: {valid_marketcap_count:,} | Final stocks kept: {len(rows):,}")
 
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -344,7 +351,7 @@ def get_full_stock_universe():
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
         st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
     else:
-        st.error("❌ No stocks found")
+        st.error("❌ Still no stocks — see Debug Summary above.")
 
     return df
 
