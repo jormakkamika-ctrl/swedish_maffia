@@ -18,18 +18,28 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# Standardized mapping for "Stocks in Selected Sector" feature
-ISM_TO_GICS = {
-    "Transportation Equipment": ["Automobiles", "Auto Components", "Aerospace & Defense"],
-    "Computer & Electronic Products": ["Technology Hardware", "Semiconductors", "Electronic Equipment"],
-    "Chemical Products": ["Chemicals", "Pharmaceuticals"],
-    "Food, Beverage & Tobacco Products": ["Food Products", "Beverages", "Tobacco"],
-    "Primary Metals": ["Metals & Mining"],
-    "Machinery": ["Machinery"],
-    "Furniture & Related Products": ["Household Durables"],
-    "Petroleum & Coal Products": ["Oil, Gas & Consumable Fuels"],
-    "Electrical Equipment, Appliances & Components": ["Electrical Equipment"],
-    "Textile Mills": ["Textiles, Apparel & Luxury Goods"]
+# UPDATED: ISM → Yahoo Finance Industry mapping (exact strings from ticker.info['industry'])
+# This is the correct target for yfinance integration (Yahoo uses its own labels, not strict GICS)
+ISM_TO_YAHOO_INDUSTRIES = {
+    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts"],
+    "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", "Communication Equipment", "Semiconductor Equipment & Materials"],
+    "Chemical Products": ["Chemicals", "Specialty Chemicals"],
+    "Food, Beverage & Tobacco Products": ["Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers", "Tobacco"],
+    "Primary Metals": ["Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining"],
+    "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Tools & Accessories"],
+    "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
+    "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Exploration & Production"],
+    "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
+    "Apparel, Leather & Allied Products": ["Textile Manufacturing", "Footwear & Accessories", "Apparel Manufacturing"],
+    "Wood Products": ["Lumber & Wood Production"],
+    "Paper Products": ["Paper & Paper Products"],
+    "Plastics & Rubber Products": ["Specialty Chemicals"],
+    "Nonmetallic Mineral Products": ["Building Materials"],
+    "Fabricated Metal Products": ["Metal Fabrication"],
+    "Textile Mills": ["Textile Manufacturing"],
+    # Remaining industries map to broader or miscellaneous categories
+    "Printing & Related Support Activities": ["Specialty Business Services"],
+    "Miscellaneous Manufacturing": ["Conglomerates", "Specialty Industrial Machinery"],
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -47,10 +57,9 @@ NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
 def get_respondent_comments(text: str) -> list[str]:
     """
-    Robust extraction that preserves ORIGINAL bullet-point structure from ISM reports.
-    Works with both * "quote" [Industry] and - "quote" formats (tested on March 2026 report).
+    Extracts the bullet-point comments from the 'WHAT RESPONDENTS ARE SAYING' section.
+    Preserves original bullet formatting from PR Newswire reports.
     """
-    # Find the entire WHAT RESPONDENTS ARE SAYING section
     section_match = re.search(
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management®|©|ISM® Reports|Report Issued|$))",
         text,
@@ -61,32 +70,29 @@ def get_respondent_comments(text: str) -> list[str]:
 
     section = section_match.group(1).strip()
 
-    # Split on bullet markers (* or -) — this handles the exact format in real reports
-    # (separator="\n" in BeautifulSoup keeps the bullets on separate lines)
-    raw_bullets = re.split(r'\s*(?:\*|\-)\s*', section)
+    # Primary pattern for * "quote" [Industry]
+    bullet_pattern = r'(?:\*|\-)\s*["“](.+?)["”]\s*(?:\[\s*(.+?)\s*\])?'
+    bullets = re.findall(bullet_pattern, section, re.DOTALL)
 
     comments = []
-    for item in raw_bullets:
-        item = item.strip()
-        if not item or len(item) < 25:
-            continue
+    for quote, industry in bullets:
+        quote = quote.strip()
+        if quote and len(quote) > 15:
+            comment = f"• {quote}"
+            if industry:
+                industry = industry.strip()
+                comment += f" [{industry}]"
+            comments.append(comment)
 
-        # Remove surrounding quotes and clean up
-        item = item.strip('"“”')
+    # Fallback split if regex didn't catch everything
+    if not comments:
+        raw_bullets = re.split(r'\s*(?:\*|\-)\s*["“]?', section)
+        for line in raw_bullets:
+            line = line.strip().strip('"“”')
+            if line and len(line) > 20:
+                comments.append(f"• {line}")
 
-        # Extract optional [Industry] tag at the end
-        industry_match = re.search(r'\[\s*(.+?)\s*\]$', item)
-        if industry_match:
-            industry = industry_match.group(1).strip()
-            quote = re.sub(r'\[\s*.+?\s*\]$', '', item).strip()
-            comment = f"• **{quote}**  *[{industry}]*"
-        else:
-            comment = f"• **{item}**"
-
-        comments.append(comment)
-
-    # Remove any accidental duplicates
-    return list(dict.fromkeys(comments))
+    return comments
 
 
 # ====================== SCRAPER ENGINE ======================
@@ -131,8 +137,7 @@ def build_historical_dataset():
         
         for url in list(dict.fromkeys(links))[:8]:
             resp = requests.get(url, headers=HEADERS, timeout=10)
-            # IMPORTANT: Use separator="\n" so bullet points stay on separate lines
-            raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator="\n")
+            raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
             pmi, m_year, growth, contr, comments = parse_report_text(raw_text)
             
             if m_year == "Unknown":
@@ -208,10 +213,11 @@ if not df_master.empty:
 
     with col_info:
         st.write("**Investment Context**")
-        selected_sector = st.selectbox("Select Sector for GICS Mapping:", INDUSTRIES)
-        related_gics = ISM_TO_GICS.get(selected_sector, ["No direct GICS mapping found"])
+        selected_sector = st.selectbox("Select ISM Sector for Yahoo Mapping:", INDUSTRIES)
         
-        st.info(f"**ISM Sector:** {selected_sector}\n\n**Commonly maps to GICS:**\n" + "\n".join([f"- {g}" for g in related_gics]))
+        related_yahoo = ISM_TO_YAHOO_INDUSTRIES.get(selected_sector, ["No direct Yahoo Finance mapping found"])
+        
+        st.info(f"**ISM Sector:** {selected_sector}\n\n**Maps to Yahoo Finance Industries:**\n" + "\n".join([f"- {y}" for y in related_yahoo]))
         
         score_now = current_df[current_df['industry'] == selected_sector]['score'].iloc[0]
         status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
@@ -221,8 +227,8 @@ if not df_master.empty:
     st.divider()
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
-            for comment in comments_list:
-                st.markdown(comment)
+            # Join with double newlines so each bullet stays cleanly separated
+            st.markdown("\n\n".join(comments_list))
         else:
             st.info("No respondent comments available for this report.")
 
