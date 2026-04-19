@@ -48,9 +48,8 @@ NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 def get_respondent_comments(text: str) -> list[str]:
     """
     Extracts the bullet-point comments from the 'WHAT RESPONDENTS ARE SAYING' section.
-    Works with real PR Newswire report formatting (tested on March/Feb/Jan 2026 reports).
+    Works with real PR Newswire report formatting.
     """
-    # Find the entire section (handles **bold** or plain heading)
     section_match = re.search(
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management®|©|ISM® Reports|Report Issued|$))",
         text,
@@ -61,22 +60,19 @@ def get_respondent_comments(text: str) -> list[str]:
 
     section = section_match.group(1).strip()
 
-    # Extract each bullet: * "quote" [Industry] or - "quote" [Industry]
-    # Supports both straight and curly quotes, and optional industry tag
     bullet_pattern = r'(?:\*|\-)\s*["“](.+?)["”]\s*(?:\[\s*(.+?)\s*\])?'
     bullets = re.findall(bullet_pattern, section, re.DOTALL)
 
     comments = []
     for quote, industry in bullets:
         quote = quote.strip()
-        if quote and len(quote) > 15:  # filter out any garbage
+        if quote and len(quote) > 15:
             comment = f"• {quote}"
             if industry:
                 industry = industry.strip()
                 comment += f" [{industry}]"
             comments.append(comment)
 
-    # Fallback: if no bullets matched, split on * or - manually (rare)
     if not comments:
         raw_bullets = re.split(r'\s*(?:\*|\-)\s*', section)
         for line in raw_bullets:
@@ -101,7 +97,6 @@ def parse_report_text(text):
         raw = match.group(1).replace(" and ", "; ")
         return [x.strip().strip('.') for x in raw.split(";") if len(x.strip()) > 3]
 
-    # Updated Patterns for Historical Consistency
     growth_p = r"reporting growth in \w+.*?\s+are:(.*?)\.\s*The"
     contr_p = r"reporting contraction in \w+.*?\s+are:(.*?)\."
 
@@ -122,14 +117,12 @@ def build_historical_dataset():
         r = requests.get(archive_url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(r.text, "html.parser")
         
-        # Find the specific manufacturing report links
         links = []
         for a in soup.find_all('a', href=True):
             if "manufacturing-pmi-report" in a['href'].lower():
                 full_url = "https://www.prnewswire.com" + a['href'] if a['href'].startswith('/') else a['href']
                 links.append(full_url)
         
-        # Process the most recent 8 links to ensure we cover a 6-month gap
         for url in list(dict.fromkeys(links))[:8]:
             resp = requests.get(url, headers=HEADERS, timeout=10)
             raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
@@ -140,7 +133,6 @@ def build_historical_dataset():
             
             date_obj = pd.to_datetime(m_year)
             
-            # Store metadata (comments are per report, not per industry)
             report_metadata[date_obj] = {
                 "comments": comments,
                 "pmi": pmi,
@@ -150,7 +142,6 @@ def build_historical_dataset():
             n_g, n_c = len(growth), len(contr)
             month_scores = {ind: 0 for ind in INDUSTRIES}
             
-            # Use normalization for robust matching
             for i, s in enumerate(growth):
                 norm = normalize_name(s)
                 if norm in NORM_TO_OFFICIAL:
@@ -192,21 +183,9 @@ if not df_master.empty:
 
     # --- TOP METRIC ---
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
+    st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs 50.0 Neutral")
 
-    col_metric, col_expander = st.columns([3, 1])
-    with col_metric:
-        st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs 50.0 Neutral")
-
-    # --- NEW EXPANDABLE SECTION FOR RESPONDENT COMMENTS ---
-    with col_expander:
-        with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
-            if comments_list:
-                for comment in comments_list:
-                    st.write(comment)
-            else:
-                st.write("No respondent comments available for this report.")
-
-    # --- HEATMAP TABLE ---
+    # --- HEATMAP TABLE + INVESTMENT CONTEXT ---
     col_table, col_info = st.columns([2, 1])
     
     with col_table:
@@ -231,8 +210,17 @@ if not df_master.empty:
         status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
         st.write(f"Current Status: **{status}** ({score_now:+d})")
 
-    # --- HISTORICAL TREND HEATMAP ---
+    # === NEW FULL-WIDTH EXPANDABLE SECTION (exactly where the red line is in your screenshot) ===
     st.divider()
+    with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
+        if comments_list:
+            for comment in comments_list:
+                st.markdown(comment)
+                st.divider()
+        else:
+            st.info("No respondent comments available for this report.")
+
+    # --- HISTORICAL TREND HEATMAP ---
     st.subheader("📈 6-Month Sector Momentum")
     
     pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
