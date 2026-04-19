@@ -5,6 +5,7 @@ import pandas as pd
 import re
 import plotly.express as px
 from datetime import datetime
+import yfinance as yf
 
 st.set_page_config(page_title="ISM PMI Intelligence", layout="wide")
 
@@ -18,8 +19,7 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# UPDATED: ISM → Yahoo Finance Industry mapping (exact strings from ticker.info['industry'])
-# This is the correct target for yfinance integration (Yahoo uses its own labels, not strict GICS)
+# ISM → Yahoo Finance Industry mapping (exact strings from ticker.info['industry'])
 ISM_TO_YAHOO_INDUSTRIES = {
     "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts"],
     "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", "Communication Equipment", "Semiconductor Equipment & Materials"],
@@ -37,7 +37,6 @@ ISM_TO_YAHOO_INDUSTRIES = {
     "Nonmetallic Mineral Products": ["Building Materials"],
     "Fabricated Metal Products": ["Metal Fabrication"],
     "Textile Mills": ["Textile Manufacturing"],
-    # Remaining industries map to broader or miscellaneous categories
     "Printing & Related Support Activities": ["Specialty Business Services"],
     "Miscellaneous Manufacturing": ["Conglomerates", "Specialty Industrial Machinery"],
 }
@@ -70,7 +69,6 @@ def get_respondent_comments(text: str) -> list[str]:
 
     section = section_match.group(1).strip()
 
-    # Primary pattern for * "quote" [Industry]
     bullet_pattern = r'(?:\*|\-)\s*["“](.+?)["”]\s*(?:\[\s*(.+?)\s*\])?'
     bullets = re.findall(bullet_pattern, section, re.DOTALL)
 
@@ -84,7 +82,6 @@ def get_respondent_comments(text: str) -> list[str]:
                 comment += f" [{industry}]"
             comments.append(comment)
 
-    # Fallback split if regex didn't catch everything
     if not comments:
         raw_bullets = re.split(r'\s*(?:\*|\-)\s*["“]?', section)
         for line in raw_bullets:
@@ -93,6 +90,69 @@ def get_respondent_comments(text: str) -> list[str]:
                 comments.append(f"• {line}")
 
     return comments
+
+
+# ====================== STOCK FETCHER (NEW) ======================
+@st.cache_data(ttl=86400)
+def get_sp500_tickers():
+    """Return list of current S&P 500 tickers (solid high-quality universe for >$1B companies)."""
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        tables = pd.read_html(url)
+        df = tables[0]
+        return df["Symbol"].tolist()
+    except Exception:
+        return ["AAPL", "MSFT", "GOOGL"]  # fallback
+
+
+@st.cache_data(ttl=3600)
+def fetch_stocks_in_industries(selected_industries: tuple):
+    """
+    Fetch stocks from S&P 500 universe that match the selected Yahoo industries.
+    Filters: Market Cap > $1B, listed on NYSE or Nasdaq.
+    """
+    if not selected_industries:
+        return pd.DataFrame()
+
+    tickers_list = get_sp500_tickers()
+    if len(tickers_list) < 10:
+        return pd.DataFrame()
+
+    # Batch fetch using yf.Tickers (much faster than individual calls)
+    tickers_obj = yf.Tickers(" ".join(tickers_list))
+
+    rows = []
+    for sym in tickers_list:
+        try:
+            info = tickers_obj.tickers[sym].info
+
+            industry = info.get("industry", "")
+            market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
+            exchange = info.get("exchange", "").upper()
+            company_name = info.get("longName") or info.get("shortName") or sym
+
+            # Filter criteria
+            if (
+                industry in selected_industries
+                and market_cap > 1_000_000_000
+                and exchange in ["NYSE", "NYQ", "NMS", "NASD"]
+            ):
+                rows.append({
+                    "Ticker": sym,
+                    "Company": company_name,
+                    "Yahoo Industry": industry,
+                    "Market Cap": market_cap,
+                    "Exchange": exchange
+                })
+        except:
+            continue  # skip any ticker that fails
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Market Cap", ascending=False)
+        # Pretty formatting
+        df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
+    return df
 
 
 # ====================== SCRAPER ENGINE ======================
@@ -121,7 +181,7 @@ def parse_report_text(text):
 def build_historical_dataset():
     """Scrapes the PR Newswire newsroom to build a 6-month historical window + respondent comments."""
     all_data = []
-    report_metadata = {}  # date -> {comments: list, pmi: float, url: str}
+    report_metadata = {}
     
     archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
     
@@ -223,14 +283,47 @@ if not df_master.empty:
         status = "🟢 Growing" if score_now > 0 else "🔴 Contracting" if score_now < 0 else "🟡 Neutral"
         st.write(f"Current Status: **{status}** ({score_now:+d})")
 
-    # === FULL-WIDTH EXPANDABLE SECTION (exactly where you wanted it) ===
+        # === NEW: Select Yahoo Industries for stock lookup ===
+        st.write("**Select Yahoo Industries to Analyze**")
+        selected_yahoo_industries = st.multiselect(
+            "Tick the ones you want to explore:",
+            options=related_yahoo,
+            default=related_yahoo[:2] if len(related_yahoo) > 1 else related_yahoo,
+            key="yahoo_select"
+        )
+
+    # === FULL-WIDTH EXPANDABLE SECTION ===
     st.divider()
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
-            # Join with double newlines so each bullet stays cleanly separated
             st.markdown("\n\n".join(comments_list))
         else:
             st.info("No respondent comments available for this report.")
+
+    # === NEW FULL-WIDTH STOCKS SECTION ===
+    st.subheader("📊 Stocks in Selected Yahoo Industries")
+    st.caption("Filtered to NYSE/Nasdaq companies with Market Cap > $1 Billion (S&P 500 universe)")
+
+    if st.button("🔍 Fetch Stocks (> $1B Market Cap)", type="primary", use_container_width=True):
+        if selected_yahoo_industries:
+            with st.spinner("Fetching latest stock data from Yahoo Finance... (first run may take 20–40 seconds)"):
+                stocks_df = fetch_stocks_in_industries(tuple(selected_yahoo_industries))
+                
+                if not stocks_df.empty:
+                    st.success(f"✅ Found {len(stocks_df)} qualifying stocks")
+                    st.dataframe(
+                        stocks_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Market Cap": st.column_config.TextColumn("Market Cap"),
+                            "Company": st.column_config.TextColumn("Company", width="medium")
+                        }
+                    )
+                else:
+                    st.warning("No stocks found matching your selection in the current universe.")
+        else:
+            st.warning("Please select at least one Yahoo Finance industry above.")
 
     # --- HISTORICAL TREND HEATMAP ---
     st.subheader("📈 6-Month Sector Momentum")
@@ -267,6 +360,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
+    st.caption("**Note:** Stock lookup uses S&P 500 universe (fast & reliable). Full NYSE/Nasdaq >$1B can be added later.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
