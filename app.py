@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="ISM PMI Intelligence", layout="wide")
+st.set_page_config(page_title="ISM PMI Intelligence Hub", layout="wide")
 
 # ====================== CONFIG & MAPPING ======================
 INDUSTRIES = [
@@ -19,7 +19,6 @@ INDUSTRIES = [
     "Transportation Equipment", "Furniture & Related Products", "Miscellaneous Manufacturing"
 ]
 
-# PURE Yahoo Finance industry strings (kept for backward compatibility)
 ISM_TO_YAHOO_INDUSTRIES = {
     "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
     "Computer & Electronic Products": ["Semiconductors", "Computer Hardware", "Electronic Components", 
@@ -31,11 +30,8 @@ ISM_TO_YAHOO_INDUSTRIES = {
     "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Tools & Accessories"],
     "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
     "Petroleum & Coal Products": [
-        "Oil & Gas Integrated",
-        "Oil & Gas Exploration & Production",
-        "Oil & Gas Refining & Marketing",
-        "Oil & Gas Midstream",
-        "Oil & Gas Equipment & Services"
+        "Oil & Gas Integrated", "Oil & Gas Exploration & Production", "Oil & Gas Refining & Marketing",
+        "Oil & Gas Midstream", "Oil & Gas Equipment & Services"
     ],
     "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
     "Apparel, Leather & Allied Products": ["Textile Manufacturing", "Footwear & Accessories", "Apparel Manufacturing"],
@@ -96,35 +92,37 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== ENHANCED ISM SUB-INDEX PARSER (Step 1) ======================
+# ====================== ENHANCED SUB-INDEX PARSER ======================
 def parse_ism_subcomponents(text: str) -> dict:
     """
-    Extracts the key sub-indices from the 'MANUFACTURING AT A GLANCE' section.
-    This is the foundation for a professional macro-to-equity scoring model.
+    Extracts CURRENT value (Mar), MoM CHANGE, and TREND MONTHS from the MANUFACTURING AT A GLANCE table.
+    Returns a rich dict for compact, professional display.
     """
     sub = {
-        "New Orders": None,
-        "Production": None,
-        "Employment": None,
-        "Supplier Deliveries": None,
-        "Prices": None,
-        "Backlog of Orders": None,
-        "Inventories": None,
+        "New Orders": {"current": None, "change": None, "trend": None, "direction": ""},
+        "Production": {"current": None, "change": None, "trend": None, "direction": ""},
+        "Employment": {"current": None, "change": None, "trend": None, "direction": ""},
+        "Prices": {"current": None, "change": None, "trend": None, "direction": ""},
+        "Backlog of Orders": {"current": None, "change": None, "trend": None, "direction": ""},
     }
 
-    # Robust patterns that work on real PR Newswire reports (March 2026 format)
+    # Match each row in the table format (works on real March 2026 report)
     for key in sub.keys():
-        # Matches "New Orders 52.3 Growth 0.5" or similar
-        pattern = rf"{key}\s*(\d+\.\d+)"
+        # Pattern matches: Key   53.5   55.8   -2.3   Growing   Slower   3
+        pattern = rf"{re.escape(key)}\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)\s*(\w+)\s*(?:Faster|Slower|Too Low|From Growing)?\s*(\d+)"
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            sub[key] = float(match.group(1))
+            sub[key]["current"] = float(match.group(1))
+            sub[key]["change"] = float(match.group(2))
+            sub[key]["direction"] = match.group(3).strip()
+            sub[key]["trend"] = int(match.group(4))
 
-    # Fallback for "Prices Paid" (sometimes labeled "Prices")
-    if sub["Prices"] is None:
-        prices_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
+    # Fallback for "Prices Paid" (sometimes just "Prices")
+    if sub["Prices"]["current"] is None:
+        prices_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
         if prices_match:
-            sub["Prices"] = float(prices_match.group(1))
+            sub["Prices"]["current"] = float(prices_match.group(1))
+            sub["Prices"]["change"] = float(prices_match.group(2))
 
     return sub
 
@@ -196,7 +194,7 @@ def fetch_stocks_in_industries(selected_industries: tuple):
     return df
 
 
-# ====================== SCRAPER ENGINE (UPDATED) ======================
+# ====================== SCRAPER ENGINE ======================
 def parse_report_text(text):
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 0.0
@@ -214,7 +212,7 @@ def parse_report_text(text):
     contr_p = r"reporting contraction in \w+.*?\s+are:(.*?)\."
 
     comments = get_respondent_comments(text)
-    subcomponents = parse_ism_subcomponents(text)  # ← NEW
+    subcomponents = parse_ism_subcomponents(text)
 
     return pmi, month_year, get_list(growth_p, text), get_list(contr_p, text), comments, subcomponents
 
@@ -296,34 +294,38 @@ if not df_master.empty:
     comments_list = latest_meta.get("comments", [])
     subcomponents = latest_meta.get("subcomponents", {})
 
-    # --- TOP METRIC + SUB-INDICES (Step 1 of professional architecture) ---
+    # --- TOP METRIC + COMPACT SUB-INDICES ---
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # Main PMI + key subcomponents in a clean metric grid
+    # Compact metric row
     metric_cols = st.columns(6)
-    with metric_cols[0]:
-        st.metric("Manufacturing PMI®", f"{pmi_val}%", delta=f"{round(pmi_val-50, 1)} vs Neutral")
-    with metric_cols[1]:
-        new_orders = subcomponents.get("New Orders")
-        delta_no = f"{new_orders - 50:.1f} vs Neutral" if new_orders else None
-        st.metric("New Orders", f"{new_orders}%" if new_orders else "N/A", delta=delta_no)
-    with metric_cols[2]:
-        employment = subcomponents.get("Employment")
-        delta_emp = f"{employment - 50:.1f} vs Neutral" if employment else None
-        st.metric("Employment", f"{employment}%" if employment else "N/A", delta=delta_emp)
-    with metric_cols[3]:
-        prices = subcomponents.get("Prices")
-        delta_prices = f"{prices - 50:.1f} vs Neutral" if prices else None
-        st.metric("Prices Paid", f"{prices}%" if prices else "N/A", delta=delta_prices)
-    with metric_cols[4]:
-        backlog = subcomponents.get("Backlog of Orders")
-        delta_backlog = f"{backlog - 50:.1f} vs Neutral" if backlog else None
-        st.metric("Backlog of Orders", f"{backlog}%" if backlog else "N/A", delta=delta_backlog)
-    with metric_cols[5]:
-        production = subcomponents.get("Production")
-        st.metric("Production", f"{production}%" if production else "N/A")
+    keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
+    labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
 
-    # --- Rest of the app (unchanged) ---
+    for i, (key, label) in enumerate(zip(keys, labels)):
+        data = subcomponents.get(key, {})
+        current = data.get("current")
+        change = data.get("change")
+        trend = data.get("trend")
+
+        if current is not None and change is not None and trend is not None:
+            delta_str = f"{change:+.1f}/{trend}"
+            # Color logic: red if contracting (<50) or negative change, green if expanding (>50)
+            is_expanding = current > 50
+            delta_color = "inverse" if not is_expanding else "normal"
+            
+            with metric_cols[i]:
+                st.metric(
+                    label=label,
+                    value=f"{current:.1f}",
+                    delta=delta_str,
+                    delta_color=delta_color
+                )
+        else:
+            with metric_cols[i]:
+                st.metric(label=label, value="N/A")
+
+    # --- Rest of the app unchanged ---
     col_table, col_info = st.columns([2, 1])
     
     with col_table:
@@ -422,7 +424,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Professional macro layer enabled** – sub-indices now extracted for future exposure scoring.")
+    st.caption("**Compact sub-indices enabled** – now shows MoM change + trend months with proper color coding.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
