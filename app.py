@@ -1,4 +1,3 @@
-HTML<FILE filename="app.py" size="14650 bytes">
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
