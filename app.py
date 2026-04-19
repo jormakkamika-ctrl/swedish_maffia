@@ -298,14 +298,17 @@ def get_all_nyse_nasdaq_tickers():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Robust batched version — avoids yfinance crash and shows progress."""
+    """Robust, batched, debug-friendly version for Streamlit Cloud."""
     tickers_list = get_all_nyse_nasdaq_tickers()
-    if not tickers_list:
+    st.info(f"✅ Loaded {len(tickers_list):,} tickers from Nasdaq directories")
+
+    if len(tickers_list) < 100:
+        st.error("❌ Ticker list is too small — Nasdaq fetch probably failed.")
         return pd.DataFrame()
 
-    batch_size = 150
+    batch_size = 50   # smaller batches = more reliable on Cloud
     rows = []
-    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe...")
+    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe... (first run ~60-90s)")
 
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i:i + batch_size]
@@ -333,20 +336,25 @@ def get_full_stock_universe():
                             "Exchange": exchange
                         })
                 except:
-                    continue  # skip individual bad tickers
-        except:
-            continue  # skip bad batch
+                    continue
+        except Exception as e:
+            st.warning(f"Batch {i//batch_size + 1} skipped: {str(e)[:80]}")
 
         # Update progress
         progress = min((i + batch_size) / len(tickers_list), 1.0)
-        progress_bar.progress(progress, text=f"Processed {i + len(batch)} / {len(tickers_list)} tickers...")
+        progress_bar.progress(progress, text=f"Processed {len(rows)} qualifying stocks so far...")
 
     progress_bar.empty()
 
     df = pd.DataFrame(rows)
+    st.info(f"✅ Final universe built: {len(df):,} stocks with Market Cap > $1B")
+
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
+    else:
+        st.error("❌ No stocks passed the filters — this should not happen.")
+
     return df
 
 # ====================== SCRAPER ======================
