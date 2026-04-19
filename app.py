@@ -102,21 +102,72 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
 
     return drivers
 
-# Professional exposure map
+# ====================== PROFESSIONAL ECONOMIC EXPOSURE MAP ======================
+# Expanded & comprehensive (covers ~70 common Yahoo industry strings)
 INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
-    "Semiconductors": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.CAPEX_PRESSURE: 0.90},
-    "Semiconductor Equipment & Materials": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.80},
-    "Specialty Industrial Machinery": {DriverName.CAPEX_PRESSURE: 0.90, DriverName.DEMAND_MOMENTUM: 0.75},
-    "Farm & Heavy Construction Machinery": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.70},
+    # DEMAND MOMENTUM (New Orders / Backlog)
+    "Auto Manufacturers": {DriverName.DEMAND_MOMENTUM: 0.92},
+    "Auto Parts": {DriverName.DEMAND_MOMENTUM: 0.88},
     "Aerospace & Defense": {DriverName.DEMAND_MOMENTUM: 0.80},
-    "Auto Manufacturers": {DriverName.DEMAND_MOMENTUM: 0.90},
-    "Auto Parts": {DriverName.DEMAND_MOMENTUM: 0.85},
-    "Steel": {DriverName.INPUT_COST_INFLATION: 0.85, DriverName.DEMAND_MOMENTUM: 0.75},
-    "Chemicals": {DriverName.INPUT_COST_INFLATION: 0.80},
-    "Specialty Chemicals": {DriverName.INPUT_COST_INFLATION: 0.75},
-    "Electrical Equipment & Parts": {DriverName.CAPEX_PRESSURE: 0.80},
+    "Residential Construction": {DriverName.DEMAND_MOMENTUM: 0.85},
+    "Consumer Electronics": {DriverName.DEMAND_MOMENTUM: 0.75},
+    "Internet Retail": {DriverName.DEMAND_MOMENTUM: 0.60},
+    "Specialty Retail": {DriverName.DEMAND_MOMENTUM: 0.55},
+    "Railroads": {DriverName.DEMAND_MOMENTUM: 0.65},
+    "Integrated Freight & Logistics": {DriverName.DEMAND_MOMENTUM: 0.60},
+    "Lumber & Wood Production": {DriverName.DEMAND_MOMENTUM: 0.75},
+
+    # CAPEX & CAPACITY PRESSURE
+    "Specialty Industrial Machinery": {DriverName.CAPEX_PRESSURE: 0.92, DriverName.DEMAND_MOMENTUM: 0.78},
+    "Farm & Heavy Construction Machinery": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.72},
+    "Electrical Equipment & Parts": {DriverName.CAPEX_PRESSURE: 0.85, DriverName.DEMAND_MOMENTUM: 0.65},
+    "Building Products & Equipment": {DriverName.CAPEX_PRESSURE: 0.80},
+    "Engineering & Construction": {DriverName.CAPEX_PRESSURE: 0.88},
+    "Semiconductor Equipment & Materials": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.82},
+    "Industrial Distribution": {DriverName.CAPEX_PRESSURE: 0.70},
+
+    # INPUT COST INFLATION (Prices Paid)
+    "Steel": {DriverName.INPUT_COST_INFLATION: 0.88, DriverName.DEMAND_MOMENTUM: 0.75},
+    "Aluminum": {DriverName.INPUT_COST_INFLATION: 0.85, DriverName.DEMAND_MOMENTUM: 0.70},
+    "Copper": {DriverName.INPUT_COST_INFLATION: 0.90, DriverName.DEMAND_MOMENTUM: 0.78},
+    "Other Industrial Metals & Mining": {DriverName.INPUT_COST_INFLATION: 0.87},
+    "Chemicals": {DriverName.INPUT_COST_INFLATION: 0.82},
+    "Specialty Chemicals": {DriverName.INPUT_COST_INFLATION: 0.78},
+    "Building Materials": {DriverName.INPUT_COST_INFLATION: 0.75},
+    "Paper & Paper Products": {DriverName.INPUT_COST_INFLATION: 0.70},
+    "Oil & Gas Exploration & Production": {DriverName.INPUT_COST_INFLATION: 0.80},
+    "Oil & Gas Refining & Marketing": {DriverName.INPUT_COST_INFLATION: 0.65},
+    "Oil & Gas Equipment & Services": {DriverName.INPUT_COST_INFLATION: 0.72},
+    "Packaging & Containers": {DriverName.INPUT_COST_INFLATION: 0.70},
+
+    # SEMICONDUCTORS & TECH HARDWARE
+    "Semiconductors": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.CAPEX_PRESSURE: 0.90},
+    "Computer Hardware": {DriverName.DEMAND_MOMENTUM: 0.70, DriverName.CAPEX_PRESSURE: 0.60},
+    "Electronic Components": {DriverName.DEMAND_MOMENTUM: 0.75},
+
+    # LABOR MARKET TIGHTNESS (added where relevant)
+    "Auto Manufacturers": {DriverName.LABOR_TIGHTNESS: 0.70},
+    "Auto Parts": {DriverName.LABOR_TIGHTNESS: 0.68},
+    "Specialty Industrial Machinery": {DriverName.LABOR_TIGHTNESS: 0.65},
+    "Farm & Heavy Construction Machinery": {DriverName.LABOR_TIGHTNESS: 0.60},
+    "Aerospace & Defense": {DriverName.LABOR_TIGHTNESS: 0.55},
 }
 
+# ====================== MANUAL OVERRIDES (high-conviction names) ======================
+MANUAL_EXPOSURE_OVERRIDES: Dict[str, Dict[DriverName, float]] = {
+    "CAT": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.80},
+    "DE":  {DriverName.CAPEX_PRESSURE: 0.96, DriverName.DEMAND_MOMENTUM: 0.75},
+    "NUE": {DriverName.INPUT_COST_INFLATION: 0.92, DriverName.DEMAND_MOMENTUM: 0.78},
+    "FCX": {DriverName.INPUT_COST_INFLATION: 0.90, DriverName.DEMAND_MOMENTUM: 0.82},
+    "NVDA": {DriverName.DEMAND_MOMENTUM: 0.88, DriverName.CAPEX_PRESSURE: 0.92},
+    "TSLA": {DriverName.DEMAND_MOMENTUM: 0.90},
+    "AMAT": {DriverName.CAPEX_PRESSURE: 0.94, DriverName.DEMAND_MOMENTUM: 0.80},
+    "ETN": {DriverName.CAPEX_PRESSURE: 0.90},
+    "PH":  {DriverName.CAPEX_PRESSURE: 0.88},
+    # Add any other ticker you want to fine-tune here
+}
+
+# ====================== EXPLAIN SCORE (unchanged) ======================
 def explain_score(row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> str:
     reasons = []
     for driver_name in DriverName:
@@ -127,20 +178,41 @@ def explain_score(row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> 
                 reasons.append(f"{strength:+.1f}×{exposure:.1f} {driver_name.value}")
     return " | ".join(reasons[:4]) or "Neutral exposure"
 
+# ====================== FULL UPDATED TAG & SCORE FUNCTION ======================
 def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, EconomicDriver]) -> pd.DataFrame:
+    """Apply industry mapping + manual ticker overrides, then compute ISM score."""
     if stocks_df.empty:
         return stocks_df
+
     exposure_matrix = []
     for _, row in stocks_df.iterrows():
         yahoo_ind = row.get("Yahoo Industry", "")
-        exposures = INDUSTRY_EXPOSURE_MAP.get(yahoo_ind, {})
+        ticker = row.get("Ticker", "")
+
+        # 1. Start with industry-level mapping
+        exposures = INDUSTRY_EXPOSURE_MAP.get(yahoo_ind, {}).copy()
+
+        # 2. Apply manual ticker overrides (higher weight wins)
+        if ticker in MANUAL_EXPOSURE_OVERRIDES:
+            override = MANUAL_EXPOSURE_OVERRIDES[ticker]
+            for d, weight in override.items():
+                exposures[d] = max(exposures.get(d, 0.0), weight)
+
+        # 3. Build vector aligned to DriverName order
         vector = [exposures.get(d, 0.0) for d in DriverName]
         exposure_matrix.append(vector)
+
+    # Create exposure columns
     exposure_df = pd.DataFrame(exposure_matrix, columns=[d.value for d in DriverName], index=stocks_df.index)
     stocks_df = pd.concat([stocks_df, exposure_df], axis=1)
+
+    # Compute final score
     driver_vector = np.array([drivers[d].strength for d in DriverName])
     stocks_df["ism_score"] = stocks_df[[d.value for d in DriverName]].dot(driver_vector).round(3)
+
+    # Add explainability column
     stocks_df["why"] = stocks_df.apply(lambda r: explain_score(r, drivers), axis=1)
+
     return stocks_df.sort_values("ism_score", ascending=False)
 
 # ====================== UTILS ======================
