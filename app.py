@@ -299,72 +299,70 @@ def get_all_nyse_nasdaq_tickers():
         return []
 
 
-# ====================== FULL STOCK UNIVERSE (fixed) ======================
+# ====================== FULL STOCK UNIVERSE (BATCHED + RATE-LIMIT RESILIENT) ======================
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_full_stock_universe(max_tickers: int = 8000):
-    """Improved version: more reliable, better error handling, slightly faster."""
+def get_full_stock_universe(max_tickers: int = 7000, batch_size: int = 120):
+    """Batched version using yf.Tickers() — dramatically reduces rate-limit hits."""
     tickers_list = get_all_nyse_nasdaq_tickers()[:max_tickers]
 
     rows = []
-    progress_bar = st.progress(0, text=f"Building universe (> $1B) — {len(tickers_list):,} tickers...")
+    progress_bar = st.progress(0, text=f"Building universe (> $1B) — {len(tickers_list):,} tickers in batches...")
 
-    success_count = 0
-    fail_count = 0
-
-    for idx, sym in enumerate(tickers_list):
+    for i in range(0, len(tickers_list), batch_size):
+        batch = tickers_list[i:i + batch_size]
         try:
-            ticker = yf.Ticker(sym)
-            info = ticker.info                    # primary source (most reliable)
-            fast_info = ticker.fast_info          # fallback for marketCap
+            tickers_obj = yf.Tickers(" ".join(batch))   # batch fetch
 
-            market_cap = (
-                info.get("marketCap")
-                or fast_info.get("marketCap")
-                or fast_info.get("market_cap")
-                or 0
-            )
+            for sym in batch:
+                try:
+                    t = tickers_obj.tickers.get(sym)
+                    if t is None:
+                        continue
 
-            if market_cap > 1_000_000_000:
-                company_name = (
-                    info.get("longName")
-                    or info.get("shortName")
-                    or sym
-                )
-                industry = info.get("industry", "") or ""
-                exchange = str(info.get("exchange", "")).upper()
+                    info = t.info
+                    fast_info = t.fast_info
 
-                # More robust exchange filter (NYQ = NYSE, NMS = NASDAQ, etc.)
-                valid_exchange_keywords = {"NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX", "NASDAQGS", "NASDAQGM"}
-                if any(kw in exchange for kw in valid_exchange_keywords):
-                    rows.append({
-                        "Ticker": sym,
-                        "Company": company_name,
-                        "Yahoo Industry": industry,
-                        "Market Cap": market_cap,
-                        "Exchange": exchange
-                    })
-                    success_count += 1
+                    market_cap = (
+                        info.get("marketCap")
+                        or fast_info.get("marketCap")
+                        or fast_info.get("market_cap")
+                        or 0
+                    )
+
+                    if market_cap > 1_000_000_000:
+                        company_name = info.get("longName") or info.get("shortName") or sym
+                        industry = info.get("industry", "") or ""
+                        exchange = str(info.get("exchange", "")).upper()
+
+                        valid_keywords = {"NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX", "NASDAQGS", "NASDAQGM"}
+                        if any(kw in exchange for kw in valid_keywords):
+                            rows.append({
+                                "Ticker": sym,
+                                "Company": company_name,
+                                "Yahoo Industry": industry,
+                                "Market Cap": market_cap,
+                                "Exchange": exchange
+                            })
+                except:
+                    continue
 
         except Exception as e:
-            fail_count += 1
-            # Only show warnings occasionally so UI doesn't get spammy
-            if fail_count % 100 == 0:
-                st.warning(f"⚠️ {fail_count} tickers failed so far (recent: {sym} — {type(e).__name__})")
+            st.warning(f"Batch starting at {batch[0]} failed ({type(e).__name__}). Sleeping 10s...")
+            time.sleep(10)   # heavy backoff on batch failure
             continue
 
-        # Progress update (every 25 tickers for smoother UI)
-        if idx % 25 == 0 or idx == len(tickers_list) - 1:
-            progress = (idx + 1) / len(tickers_list)
-            progress_bar.progress(
-                progress,
-                text=f"Processed {idx+1:,}/{len(tickers_list):,} | Found {len(rows):,} stocks | Failed: {fail_count}"
-            )
+        # Progress
+        progress = min(1.0, (i + batch_size) / len(tickers_list))
+        progress_bar.progress(
+            progress,
+            text=f"Processed {i+len(batch):,}/{len(tickers_list):,} | Found {len(rows):,} valid stocks"
+        )
 
-        time.sleep(0.22)   # Slightly more conservative than 0.30 to reduce throttling
+        time.sleep(1.8)   # critical pause between batches
 
     progress_bar.empty()
 
-    st.success(f"✅ Universe built: **{len(rows):,} stocks** (> $1B market cap) | Failed: {fail_count}")
+    st.success(f"✅ Universe built with **{len(rows):,} stocks** (> $1B market cap)")
 
     if rows:
         df = pd.DataFrame(rows)
@@ -372,7 +370,7 @@ def get_full_stock_universe(max_tickers: int = 8000):
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
         return df
     else:
-        st.error("❌ No stocks found — check rate limits or internet connection.")
+        st.error("❌ Still no stocks — rate limits may still be too aggressive.")
         return pd.DataFrame()
 
 # ====================== SCRAPER ======================
