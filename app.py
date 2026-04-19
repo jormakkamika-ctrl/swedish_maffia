@@ -302,10 +302,10 @@ def get_all_nyse_nasdaq_tickers():
 # ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """More resilient version — smaller batches + sleep to avoid yfinance rate limits."""
+    """Improved version — smaller batches + longer sleep + fallback for higher yield."""
     tickers_list = get_all_nyse_nasdaq_tickers()
 
-    batch_size = 30                    # smaller = much more stable
+    batch_size = 20                    # smaller = much higher success rate
     rows = []
     progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)...")
 
@@ -346,15 +346,13 @@ def get_full_stock_universe():
             st.warning(f"Batch skipped: {str(e)[:80]}")
             continue
 
-        # Be nice to yfinance
-        time.sleep(0.25)
+        time.sleep(0.5)   # ← key change for reliability
 
         progress = min((i + batch_size) / len(tickers_list), 1.0)
         progress_bar.progress(progress, text=f"Found {len(rows):,} qualifying stocks so far...")
 
     progress_bar.empty()
 
-    # Debug summary
     st.info(f"**Debug Summary** → Total processed: {count_total:,} | >$1B market cap: {count_big_marketcap:,}")
 
     df = pd.DataFrame(rows)
@@ -536,6 +534,70 @@ if st.button("🚀 Generate Ranked Ideas (Full Universe)", type="primary", use_c
             )
         else:
             st.error("❌ Could not fetch stock universe.")
+
+# ====================== HISTORICAL BACKTEST ======================
+st.subheader("📅 Historical Backtest (Test Past ISM Reports)")
+
+if report_metadata:
+    # Get sorted list of available historical dates
+    historical_dates = sorted(report_metadata.keys(), reverse=True)
+    date_options = [d.strftime('%B %Y') for d in historical_dates]
+    
+    selected_month_str = st.selectbox(
+        "Select a past ISM report to backtest:",
+        options=date_options,
+        index=0  # default to most recent (current month)
+    )
+    
+    # Map back to actual datetime object
+    selected_date = next(d for d in historical_dates if d.strftime('%B %Y') == selected_month_str)
+    
+    if st.button(f"🔄 Re-run Scoring for {selected_month_str}", type="primary", use_container_width=True):
+        with st.spinner(f"Re-calculating drivers + scoring for {selected_month_str}..."):
+            # Get historical subcomponents
+            hist_meta = report_metadata[selected_date]
+            hist_subcomponents = hist_meta.get("subcomponents", {})
+            
+            # Re-compute drivers for that past month
+            hist_drivers = calculate_drivers(hist_subcomponents)
+            
+            # Re-score the full stock universe with historical drivers
+            stocks_df = get_full_stock_universe()  # uses cached universe
+            if not stocks_df.empty:
+                scored_hist = tag_and_score_stocks(stocks_df.copy(), hist_drivers)
+                
+                st.success(f"✅ Backtest complete for {selected_month_str} — Top ideas below")
+                
+                # Show the historical ranked table
+                display_cols = ["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]
+                st.dataframe(
+                    scored_hist.head(30)[display_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Market Cap": st.column_config.TextColumn("Market Cap"),
+                        "Company": st.column_config.TextColumn("Company", width="medium"),
+                        "why": st.column_config.TextColumn("Why this stock scored high", width="large"),
+                        "ism_score": st.column_config.NumberColumn("ISM Score", format="%.2f"),
+                    }
+                )
+                
+                # Quick driver snapshot for that month
+                st.caption("Economic Driver Signals for this historical month:")
+                driver_cols = st.columns(len(hist_drivers))
+                for idx, (d_name, driver) in enumerate(hist_drivers.items()):
+                    with driver_cols[idx]:
+                        color = "normal" if driver.strength > 0 else "inverse"
+                        st.metric(
+                            label=d_name,
+                            value=f"{driver.strength:+.2f}",
+                            delta=driver.description,
+                            delta_color=color
+                        )
+            else:
+                st.error("No stock universe available for backtesting.")
+else:
+    st.info("No historical data available yet — run a Deep Refresh first.")
 
 st.divider()
 
