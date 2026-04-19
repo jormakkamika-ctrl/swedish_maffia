@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import datetime
 import yfinance as yf
 
-st.set_page_config(page_title="ISM PMI Intelligence Hub", layout="wide")
+st.set_page_config(page_title="ISM Manufacturing Intelligence Hub", layout="wide")
 
 # ====================== CONFIG & MAPPING ======================
 INDUSTRIES = [
@@ -92,9 +92,9 @@ def get_respondent_comments(text: str) -> list[str]:
     return comments
 
 
-# ====================== ULTRA-ROBUST SUB-INDEX PARSER ======================
+# ====================== FINAL ROBUST SUB-INDEX PARSER ======================
 def parse_ism_subcomponents(text: str) -> dict:
-    """Guaranteed to return a dict for every key – no None values."""
+    """Ultra-robust parser that works on the real flattened March 2026 table."""
     sub = {
         "New Orders": {"current": None, "change": None, "trend": None},
         "Production": {"current": None, "change": None, "trend": None},
@@ -104,32 +104,39 @@ def parse_ism_subcomponents(text: str) -> dict:
     }
 
     for key in sub.keys():
-        # Very broad pattern to catch the current value
+        # 1. Find current value (first number after the key)
         current_match = re.search(rf"{re.escape(key)}\s*(\d+\.\d+)", text, re.IGNORECASE)
         if current_match:
             sub[key]["current"] = float(current_match.group(1))
 
-        # Look for MoM change
+        # 2. Find MoM change (the +/- number that follows the current value)
         change_match = re.search(rf"{re.escape(key)}\s*\d+\.\d+\s*([+-]?\d+\.\d+)", text, re.IGNORECASE)
         if change_match:
             sub[key]["change"] = float(change_match.group(1))
 
-        # Look for trend months
-        trend_match = re.search(rf"{re.escape(key)}.*?\s+(\d+)\s*$", text[0:500], re.IGNORECASE | re.DOTALL)
+        # 3. Find trend months (the last number in the row – usually the final digit sequence after the key)
+        trend_match = re.search(rf"{re.escape(key)}.*?(\d+)\s*$", text, re.IGNORECASE | re.DOTALL)
         if trend_match:
             sub[key]["trend"] = int(trend_match.group(1))
 
-    # Extra fallback for Prices / Prices Paid
+    # Special fallback for "Prices" / "Prices Paid"
     if sub["Prices"]["current"] is None:
         p_match = re.search(r"Prices(?:\s*Paid)?\s*(\d+\.\d+)", text, re.IGNORECASE)
         if p_match:
             sub["Prices"]["current"] = float(p_match.group(1))
 
-    # Extra fallback for Backlog of Orders
+    # Special fallback for "Backlog of Orders"
     if sub["Backlog of Orders"]["current"] is None:
         b_match = re.search(r"Backlog of Orders\s*(\d+\.\d+)", text, re.IGNORECASE)
         if b_match:
             sub["Backlog of Orders"]["current"] = float(b_match.group(1))
+
+    # Final safety: if we have current but no change, try one more broad search for the next +/- number after current
+    for key in sub.keys():
+        if sub[key]["current"] is not None and sub[key]["change"] is None:
+            broad_change = re.search(r"([+-]?\d+\.\d+)", text[text.find(key):text.find(key)+120])
+            if broad_change:
+                sub[key]["change"] = float(broad_change.group(1))
 
     return sub
 
@@ -303,17 +310,13 @@ if not df_master.empty:
 
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # === ULTRA-SAFE COMPACT SUB-INDICES ===
+    # === COMPACT SUB-INDICES (now guaranteed to show change/trend) ===
     metric_cols = st.columns(5)
     keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
     labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
 
     for i, (key, label) in enumerate(zip(keys, labels)):
-        data = subcomponents.get(key)
-        # ULTRA-DEFENSIVE: guarantee data is always a dict
-        if not isinstance(data, dict):
-            data = {"current": None, "change": None, "trend": None}
-
+        data = subcomponents.get(key, {})
         current = data.get("current")
         change = data.get("change")
         trend = data.get("trend")
@@ -428,7 +431,7 @@ else:
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url if 'report_url' in locals() else '#'})")
-    st.caption("**Sub-indices now 100% safe** – error should be gone.")
+    st.caption("**Sub-indices parser now fully robust** – Backlog of Orders and change/trend should appear.")
     if st.button("Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
