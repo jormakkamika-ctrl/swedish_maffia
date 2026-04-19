@@ -276,7 +276,29 @@ def parse_ism_subcomponents(text: str) -> dict:
             sub["Prices"] = {"current": float(p_match.group(1)), "change": float(p_match.group(2)), "trend": int(p_match.group(3))}
     return sub
 
-# ====================== STOCK UNIVERSE ======================
+# ====================== TICKER LOADER (must come BEFORE the universe function) ======================
+@st.cache_data(ttl=86400)
+def get_all_nyse_nasdaq_tickers():
+    """Ultra-robust ticker loader — uses requests + line split (no pandas NaN issues)."""
+    try:
+        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all/all_tickers.txt"
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        response.raise_for_status()
+        
+        tickers = []
+        for line in response.text.splitlines():
+            t = line.strip()
+            if t and not any(c in t for c in [".", "^", "/", "\\", " ", "\t"]):
+                tickers.append(t)
+        
+        st.info(f"✅ Loaded {len(tickers):,} total US tickers (NASDAQ + NYSE + AMEX)")
+        return sorted(tickers)
+    except Exception as e:
+        st.error(f"⚠️ Ticker list failed to load: {str(e)[:120]}")
+        return []
+
+
+# ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
     """Lenient + debug version — accepts any US-listed stock with market_cap > $1B."""
@@ -288,7 +310,6 @@ def get_full_stock_universe():
 
     count_total = 0
     count_big_marketcap = 0
-    count_valid_exchange = 0
 
     for i in range(0, len(tickers_list), batch_size):
         batch = tickers_list[i:i + batch_size]
@@ -311,16 +332,9 @@ def get_full_stock_universe():
                     if market_cap > 1_000_000_000:
                         count_big_marketcap += 1
 
-                    # Very lenient exchange filter (we already know they are US-listed)
-                    valid_exchange = (
-                        not exchange or 
-                        any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"])
-                    )
-
-                    if valid_exchange:
-                        count_valid_exchange += 1
-
-                    if market_cap > 1_000_000_000 and valid_exchange:
+                    # Very lenient exchange check
+                    if (market_cap > 1_000_000_000 and
+                        any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"])):
                         rows.append({
                             "Ticker": sym,
                             "Company": company_name,
@@ -339,8 +353,8 @@ def get_full_stock_universe():
 
     progress_bar.empty()
 
-    # === DEBUG SUMMARY ===
-    st.info(f"**Debug Summary** → Total processed: {count_total:,} | >$1B market cap: {count_big_marketcap:,} | Valid exchange: {count_valid_exchange:,}")
+    # Debug summary
+    st.info(f"**Debug Summary** → Total processed: {count_total:,} | >$1B market cap: {count_big_marketcap:,}")
 
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -348,7 +362,7 @@ def get_full_stock_universe():
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
         st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
     else:
-        st.error("❌ Still no stocks passed the filters — check the Debug Summary above.")
+        st.error("❌ Still no stocks — check the Debug Summary above.")
 
     return df
 
