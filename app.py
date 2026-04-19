@@ -302,58 +302,41 @@ def get_all_nyse_nasdaq_tickers():
 # ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Improved version — smaller batches + longer sleep + fallback for higher yield."""
+    """Single-ticker version — most reliable on Streamlit Cloud."""
     tickers_list = get_all_nyse_nasdaq_tickers()
 
-    batch_size = 20                    # smaller = much higher success rate
     rows = []
-    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)...")
+    progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)... (this may take 4–6 min first time)")
 
-    count_total = 0
-    count_big_marketcap = 0
-
-    for i in range(0, len(tickers_list), batch_size):
-        batch = tickers_list[i:i + batch_size]
+    for idx, sym in enumerate(tickers_list):
         try:
-            tickers_obj = yf.Tickers(" ".join(batch))
-            for sym in batch:
-                try:
-                    info = tickers_obj.tickers.get(sym)
-                    if not info:
-                        continue
-                    info = info.info
+            ticker = yf.Ticker(sym)
+            info = ticker.info
 
-                    industry = info.get("industry", "") or ""
-                    market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
-                    exchange = (info.get("exchange", "") or "").upper()
-                    company_name = info.get("longName") or info.get("shortName") or sym
+            industry = info.get("industry", "") or ""
+            market_cap = info.get("marketCap") or info.get("enterpriseValue") or 0
+            exchange = (info.get("exchange", "") or "").upper()
+            company_name = info.get("longName") or info.get("shortName") or sym
 
-                    count_total += 1
-                    if market_cap > 1_000_000_000:
-                        count_big_marketcap += 1
-
-                    if market_cap > 1_000_000_000 and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
-                        rows.append({
-                            "Ticker": sym,
-                            "Company": company_name,
-                            "Yahoo Industry": industry,
-                            "Market Cap": market_cap,
-                            "Exchange": exchange
-                        })
-                except:
-                    continue
-        except Exception as e:
-            st.warning(f"Batch skipped: {str(e)[:80]}")
+            if market_cap > 1_000_000_000 and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
+                rows.append({
+                    "Ticker": sym,
+                    "Company": company_name,
+                    "Yahoo Industry": industry,
+                    "Market Cap": market_cap,
+                    "Exchange": exchange
+                })
+        except:
             continue
 
-        time.sleep(0.5)   # ← key change for reliability
+        # Update progress
+        if idx % 50 == 0 or idx == len(tickers_list) - 1:
+            progress = (idx + 1) / len(tickers_list)
+            progress_bar.progress(progress, text=f"Found {len(rows):,} qualifying stocks so far...")
 
-        progress = min((i + batch_size) / len(tickers_list), 1.0)
-        progress_bar.progress(progress, text=f"Found {len(rows):,} qualifying stocks so far...")
+        time.sleep(0.35)   # polite delay to avoid rate limits
 
     progress_bar.empty()
-
-    st.info(f"**Debug Summary** → Total processed: {count_total:,} | >$1B market cap: {count_big_marketcap:,}")
 
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -361,7 +344,7 @@ def get_full_stock_universe():
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
         st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
     else:
-        st.error("❌ Still no stocks — check Debug Summary.")
+        st.error("❌ No stocks found")
 
     return df
 
