@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
+import time
 import plotly.express as px
 import numpy as np
 import yfinance as yf
@@ -301,10 +302,10 @@ def get_all_nyse_nasdaq_tickers():
 # ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Lenient + debug version — accepts any US-listed stock with market_cap > $1B."""
+    """More resilient version — smaller batches + sleep to avoid yfinance rate limits."""
     tickers_list = get_all_nyse_nasdaq_tickers()
 
-    batch_size = 60
+    batch_size = 30                    # smaller = much more stable
     rows = []
     progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)...")
 
@@ -328,13 +329,10 @@ def get_full_stock_universe():
                     company_name = info.get("longName") or info.get("shortName") or sym
 
                     count_total += 1
-
                     if market_cap > 1_000_000_000:
                         count_big_marketcap += 1
 
-                    # Very lenient exchange check
-                    if (market_cap > 1_000_000_000 and
-                        any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"])):
+                    if market_cap > 1_000_000_000 and any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
                         rows.append({
                             "Ticker": sym,
                             "Company": company_name,
@@ -347,6 +345,9 @@ def get_full_stock_universe():
         except Exception as e:
             st.warning(f"Batch skipped: {str(e)[:80]}")
             continue
+
+        # Be nice to yfinance
+        time.sleep(0.25)
 
         progress = min((i + batch_size) / len(tickers_list), 1.0)
         progress_bar.progress(progress, text=f"Found {len(rows):,} qualifying stocks so far...")
@@ -362,7 +363,7 @@ def get_full_stock_universe():
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
         st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
     else:
-        st.error("❌ Still no stocks — check the Debug Summary above.")
+        st.error("❌ Still no stocks — check Debug Summary.")
 
     return df
 
