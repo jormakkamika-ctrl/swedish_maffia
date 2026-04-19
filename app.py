@@ -302,63 +302,60 @@ def get_all_nyse_nasdaq_tickers():
 # ====================== FULL STOCK UNIVERSE (now calls the function above) ======================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Optimized: Bulk fetch market caps first to avoid rate limits."""
-    tickers_list = get_all_nyse_nasdaq_tickers()[:4000] 
-    
+    """FastInfo version — the reliable way on Streamlit Cloud."""
+    tickers_list = get_all_nyse_nasdaq_tickers()[:5000]   # limit for speed on first run
+
     rows = []
-    progress_bar = st.progress(0, text="Filtering universe for > $1B Market Cap...")
+    progress_bar = st.progress(0, text="Fetching universe (> $1B)... (first run ~2–4 min)")
 
-    # Step 1: Bulk download current data for the universe
-    # This is MUCH faster than .info and usually doesn't trigger rate limits
-    try:
-        # We download just the last day to get close-price/volume/etc
-        bulk_data = yf.download(tickers_list, period="1d", group_by='ticker', threads=True, progress=False)
-    except Exception as e:
-        st.error(f"Bulk download failed: {e}")
-        return pd.DataFrame()
+    valid_marketcap_count = 0
 
-    # Step 2: Iterate and only call .info for the big ones
-    found_count = 0
     for idx, sym in enumerate(tickers_list):
-        if idx % 50 == 0:
-            progress_bar.progress((idx+1)/len(tickers_list))
-            
         try:
-            # Check if ticker exists in bulk download
-            if sym not in bulk_data.columns.levels[0]:
-                continue
-                
-            t = yf.Ticker(sym)
-            # Use fast_info if available (yfinance 0.2.x feature)
-            # It's less likely to be rate-limited than .info
-            m_cap = getattr(t.fast_info, 'market_cap', 0)
-            
-            if m_cap > 1_000_000_000:
-                # ONLY now do we call the heavy .info scrape
-                info = t.info 
-                rows.append({
-                    "Ticker": sym,
-                    "Company": info.get("longName", sym),
-                    "Yahoo Industry": info.get("industry", "Unknown"),
-                    "Market Cap": m_cap,
-                    "Exchange": info.get("exchange", "Unknown")
-                })
-                found_count += 1
-                # Small sleep to keep Yahoo happy
-                time.sleep(0.1) 
+            ticker = yf.Ticker(sym)
+            fast_info = ticker.fast_info   # ← this is the key change
+
+            market_cap = fast_info.get('marketCap') or fast_info.get('market_cap') or 0
+
+            if market_cap > 1_000_000_000:
+                valid_marketcap_count += 1
+
+                # Get the rest of the data
+                info = ticker.info
+                industry = info.get("industry", "") or ""
+                exchange = (info.get("exchange", "") or "").upper()
+                company_name = info.get("longName") or info.get("shortName") or sym
+
+                if any(x in exchange for x in ["NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX"]):
+                    rows.append({
+                        "Ticker": sym,
+                        "Company": company_name,
+                        "Yahoo Industry": industry,
+                        "Market Cap": market_cap,
+                        "Exchange": exchange
+                    })
         except:
             continue
 
+        # Progress update every 10 tickers
+        if idx % 10 == 0 or idx == len(tickers_list) - 1:
+            progress = (idx + 1) / len(tickers_list)
+            progress_bar.progress(progress, text=f"Processed {idx+1:,} tickers | Found {len(rows):,} stocks so far...")
+
+        time.sleep(0.30)
+
     progress_bar.empty()
+
+    st.info(f"**Debug Summary** → Valid >$1B market caps found: {valid_marketcap_count:,} | Final stocks kept: {len(rows):,}")
+
     df = pd.DataFrame(rows)
-    
     if not df.empty:
         df = df.sort_values("Market Cap", ascending=False)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
-        st.success(f"✅ Success! Found {len(df)} stocks > $1B.")
+        st.success(f"✅ Built universe with {len(df):,} stocks (Market Cap > $1B)")
     else:
-        st.error("Still 0 stocks. Yahoo is likely blocking the scrape. Try a smaller slice: tickers_list[:500]")
-        
+        st.error("❌ Still no stocks — see Debug Summary above.")
+
     return df
 
 # ====================== SCRAPER ======================
