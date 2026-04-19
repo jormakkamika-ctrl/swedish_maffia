@@ -96,13 +96,13 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
         description="Hiring plans & wage pressure"
     )
 
-    # Inventory & Sector (placeholders — ready for future enhancement)
+    # Placeholders
     drivers[DriverName.INVENTORY_RESTOCKING] = EconomicDriver(name=DriverName.INVENTORY_RESTOCKING, strength=0.0, signals_used=["Inventories (future)"], description="Inventory drawdown → restocking")
     drivers[DriverName.SECTOR_SPECIFIC_STRENGTH] = EconomicDriver(name=DriverName.SECTOR_SPECIFIC_STRENGTH, strength=0.0, signals_used=["ISM Industry List"], description="Direct end-market momentum")
 
     return drivers
 
-# Professional exposure map (Yahoo industry → driver weights)
+# Professional exposure map
 INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
     "Semiconductors": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.CAPEX_PRESSURE: 0.90},
     "Semiconductor Equipment & Materials": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.80},
@@ -115,7 +115,6 @@ INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
     "Chemicals": {DriverName.INPUT_COST_INFLATION: 0.80},
     "Specialty Chemicals": {DriverName.INPUT_COST_INFLATION: 0.75},
     "Electrical Equipment & Parts": {DriverName.CAPEX_PRESSURE: 0.80},
-    # Extend freely
 }
 
 def explain_score(row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> str:
@@ -256,14 +255,13 @@ def get_full_stock_universe():
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
     return df
 
-# ====================== SCRAPER (FULLY RESTORED) ======================
+# ====================== SCRAPER ======================
 def parse_report_text(text: str):
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 50.0
     month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
     month_year = month_match.group(0) if month_match else "Unknown"
 
-    # Growth / contraction lists (still needed for historical heatmap & rankings)
     def get_list(pattern, src):
         match = re.search(pattern, src, re.DOTALL | re.IGNORECASE)
         if not match: return []
@@ -302,7 +300,6 @@ def build_historical_dataset():
                 "subcomponents": subcomponents,
                 "url": full_url
             }
-            # === RESTORED: Build historical industry scores for heatmap & rankings ===
             n_g, n_c = len(growth), len(contr)
             month_scores = {ind: 0 for ind in INDUSTRIES}
             for i, s in enumerate(growth):
@@ -345,7 +342,15 @@ subcomponents = latest_meta.get("subcomponents", {})
 
 st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-# === SUB-INDICES (unchanged) ===
+# === 1. HEADLINE MANUFACTURING PMI (restored as big prominent metric) ===
+st.metric(
+    label="**Manufacturing PMI**",
+    value=f"{pmi_val:.1f}",
+    delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
+    delta_color="normal" if pmi_val > 50 else "inverse"
+)
+
+# === 2. SUB-INDICES ROW (unchanged — best-in-class) ===
 metric_cols = st.columns(5)
 keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
 labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
@@ -365,7 +370,20 @@ for i, (key, label) in enumerate(zip(keys, labels)):
 
 st.divider()
 
-# ====================== ECONOMIC DRIVER ONTOLOGY PANEL ======================
+# === 3. INDUSTRY RANKINGS TABLE (restored exactly as before) ===
+st.subheader("📊 Industry Rankings (Ordered by Growth)")
+styled_df = (
+    current_df[["industry", "score"]]
+    .sort_values("score", ascending=False)
+    .style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
+    .format({"score": "{:+d}"})
+    .set_properties(**{"font-weight": "bold"})
+)
+st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+st.divider()
+
+# === 4. ECONOMIC DRIVER SIGNALS (placed exactly where you asked) ===
 st.subheader("🔬 Economic Driver Signals (Professional Macro Translation)")
 drivers = calculate_drivers(subcomponents)
 driver_cols = st.columns(len(drivers))
@@ -416,7 +434,7 @@ with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
     else:
         st.info("No respondent comments available for this report.")
 
-# ====================== REMAINING FEATURES (HEATMAP + EVOLUTION) ======================
+# ====================== REMAINING FEATURES ======================
 st.subheader("📊 6-Month Sector Momentum")
 pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
 pivot = pivot.reindex(INDUSTRIES)
