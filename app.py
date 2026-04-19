@@ -279,29 +279,31 @@ def parse_ism_subcomponents(text: str) -> dict:
 # ====================== STOCK UNIVERSE ======================
 @st.cache_data(ttl=86400)
 def get_all_nyse_nasdaq_tickers():
-    """Reliable GitHub mirror — works on Streamlit Cloud."""
+    """Reliable combined ticker list from the official GitHub mirror (NASDAQ + NYSE + AMEX)."""
     try:
-        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all_symbols.txt"
+        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all/all_tickers.txt"
         df = pd.read_csv(url, header=None, names=["Symbol"])
         tickers = df["Symbol"].astype(str).str.strip().tolist()
+        
         # Clean invalid symbols
-        tickers = [t for t in tickers if t and not any(c in t for c in [".", "^", "/", "\\"])]
-        st.info(f"✅ Loaded {len(tickers):,} US tickers from stable GitHub mirror")
+        tickers = [t for t in tickers if t and not any(c in t for c in [".", "^", "/", "\\", " "])]
+        
+        st.info(f"✅ Loaded {len(tickers):,} total US tickers (NASDAQ + NYSE + AMEX)")
         return sorted(tickers)
     except Exception as e:
-        st.error(f"⚠️ Could not load ticker list: {str(e)[:100]}")
+        st.error(f"⚠️ Ticker list failed to load: {str(e)[:100]}")
         return []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stock_universe():
-    """Robust batched fetch using the stable ticker list."""
+    """Robust batched fetch using the stable combined ticker list."""
     tickers_list = get_all_nyse_nasdaq_tickers()
 
-    if len(tickers_list) < 5000:
-        st.warning("⚠️ Ticker list smaller than expected — still proceeding.")
+    if len(tickers_list) < 8000:
+        st.warning(f"⚠️ Loaded only {len(tickers_list):,} tickers — still proceeding.")
 
-    batch_size = 50
+    batch_size = 60   # sweet spot for reliability on Streamlit Cloud
     rows = []
     progress_bar = st.progress(0, text="Fetching full NYSE + NASDAQ universe (> $1B)... (first run ~60–90s)")
 
