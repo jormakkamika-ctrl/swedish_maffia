@@ -277,100 +277,109 @@ def parse_ism_subcomponents(text: str) -> dict:
             sub["Prices"] = {"current": float(p_match.group(1)), "change": float(p_match.group(2)), "trend": int(p_match.group(3))}
     return sub
 
-# ====================== TICKER LOADER ======================
+# ====================== OFFICIAL TICKER LOADER (stolen from Bangkok app) ======================
 @st.cache_data(ttl=86400)
-def get_all_nyse_nasdaq_tickers():
-    """Same reliable source, but with a bit more defensive parsing."""
+def load_all_us_tickers():
+    """Official NASDAQ + NYSE + AMEX lists — much cleaner than GitHub mirror."""
     try:
-        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/all/all_tickers.txt"
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        response.raise_for_status()
+        nasdaq = pd.read_csv("https://www.nasdaqtrader.com/dynamic/symdir/nasdaqlisted.txt", sep='|')
+        other = pd.read_csv("https://www.nasdaqtrader.com/dynamic/symdir/otherlisted.txt", sep='|')
         
-        tickers = []
-        for line in response.text.splitlines():
-            t = line.strip().upper()
-            if t and not any(c in t for c in [".", "^", "/", "\\", " ", "\t", "-"]):
-                tickers.append(t)
+        n_df = nasdaq[['Symbol', 'Security Name']].copy()
+        o_df = other[['ACT Symbol', 'Security Name']].rename(columns={'ACT Symbol': 'Symbol'}).copy()
         
-        st.info(f"✅ Loaded {len(tickers):,} total US tickers")
-        return sorted(tickers)
+        full_df = pd.concat([n_df, o_df], ignore_index=True).drop_duplicates(subset='Symbol')
+        
+        # Filter obvious junk
+        full_df = full_df[~full_df['Symbol'].str.contains(r'\$|\.|TEST|N/A', na=False)]
+        
+        st.info(f"✅ Loaded {len(full_df):,} official US tickers (NASDAQ + NYSE + AMEX)")
+        return full_df
     except Exception as e:
-        st.error(f"⚠️ Ticker list failed: {str(e)[:150]}")
-        return []
+        st.error(f"Failed to load official ticker list: {e}")
+        return pd.DataFrame()
 
 
-# ====================== FULL STOCK UNIVERSE (BATCHED + RATE-LIMIT RESILIENT) ======================
+# ====================== FULL STOCK UNIVERSE (Hybrid — Best of Both Apps) ======================
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_full_stock_universe(max_tickers: int = 7000, batch_size: int = 120):
-    """Batched version using yf.Tickers() — dramatically reduces rate-limit hits."""
-    tickers_list = get_all_nyse_nasdaq_tickers()[:max_tickers]
-
+def get_full_stock_universe(max_tickers: int = 8000, batch_size: int = 150):
+    """Official tickers + batched yf.Tickers + market-cap filter."""
+    tickers_df = load_all_us_tickers()
+    if tickers_df.empty:
+        return pd.DataFrame()
+    
+    # Pre-filter to stocks only (optional — you can remove this line if you want ETFs too)
+    stock_symbols = tickers_df[~tickers_df['Security Name'].str.contains(
+        'ETF|Trust|Fund|Invesco|iShares|Vanguard|WARRANT|RIGHTS|UNIT|WT', case=False, na=False
+    )]['Symbol'].tolist()
+    
+    stock_symbols = stock_symbols[:max_tickers]
+    
     rows = []
-    progress_bar = st.progress(0, text=f"Building universe (> $1B) — {len(tickers_list):,} tickers in batches...")
+    progress_bar = st.progress(0, text=f"Building ISM universe (> $1B) — {len(stock_symbols):,} symbols...")
 
-    for i in range(0, len(tickers_list), batch_size):
-        batch = tickers_list[i:i + batch_size]
+    for i in range(0, len(stock_symbols), batch_size):
+        batch = stock_symbols[i:i + batch_size]
+        
         try:
-            tickers_obj = yf.Tickers(" ".join(batch))   # batch fetch
-
+            tickers_obj = yf.Tickers(" ".join(batch))
+            
             for sym in batch:
                 try:
                     t = tickers_obj.tickers.get(sym)
-                    if t is None:
+                    if not t:
                         continue
-
+                    
                     info = t.info
                     fast_info = t.fast_info
-
+                    
                     market_cap = (
                         info.get("marketCap")
                         or fast_info.get("marketCap")
                         or fast_info.get("market_cap")
                         or 0
                     )
-
+                    
                     if market_cap > 1_000_000_000:
                         company_name = info.get("longName") or info.get("shortName") or sym
                         industry = info.get("industry", "") or ""
                         exchange = str(info.get("exchange", "")).upper()
-
-                        valid_keywords = {"NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX", "NASDAQGS", "NASDAQGM"}
-                        if any(kw in exchange for kw in valid_keywords):
+                        
+                        valid_exchanges = {"NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX", "NASDAQGS", "NASDAQGM"}
+                        
+                        if any(kw in exchange for kw in valid_exchanges):
                             rows.append({
                                 "Ticker": sym,
                                 "Company": company_name,
                                 "Yahoo Industry": industry,
                                 "Market Cap": market_cap,
-                                "Exchange": exchange
+                                "Exchange": exchange,
+                                "Security Name": tickers_df[tickers_df['Symbol'] == sym]['Security Name'].iloc[0]
                             })
                 except:
                     continue
-
+                    
         except Exception as e:
-            st.warning(f"Batch starting at {batch[0]} failed ({type(e).__name__}). Sleeping 10s...")
-            time.sleep(10)   # heavy backoff on batch failure
+            st.warning(f"Batch failed at {batch[0]} ({type(e).__name__}) — sleeping 8s")
+            time.sleep(8)
             continue
-
-        # Progress
-        progress = min(1.0, (i + batch_size) / len(tickers_list))
-        progress_bar.progress(
-            progress,
-            text=f"Processed {i+len(batch):,}/{len(tickers_list):,} | Found {len(rows):,} valid stocks"
-        )
-
-        time.sleep(1.8)   # critical pause between batches
-
+        
+        # Progress update
+        progress = min(1.0, (i + batch_size) / len(stock_symbols))
+        progress_bar.progress(progress, text=f"Processed {i+len(batch):,}/{len(stock_symbols):,} | Found {len(rows):,} stocks")
+        
+        time.sleep(1.5)   # Sweet spot — aggressive but safe
+    
     progress_bar.empty()
-
-    st.success(f"✅ Universe built with **{len(rows):,} stocks** (> $1B market cap)")
-
+    
     if rows:
         df = pd.DataFrame(rows)
         df = df.sort_values("Market Cap", ascending=False).reset_index(drop=True)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
+        st.success(f"✅ Universe ready: **{len(df):,} stocks** (> $1B market cap)")
         return df
     else:
-        st.error("❌ Still no stocks — rate limits may still be too aggressive.")
+        st.error("No stocks found — rate limits may still be active.")
         return pd.DataFrame()
 
 # ====================== SCRAPER ======================
