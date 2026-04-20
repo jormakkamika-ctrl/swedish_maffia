@@ -526,6 +526,8 @@ def build_historical_dataset():
         return pd.DataFrame(columns=["date", "industry", "score", "pmi", "url"]), {}
     
     st.success(f"✅ Loaded {len(df['date'].unique())} historical ISM reports")
+    df = pd.DataFrame(all_data)
+        df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)  # ← add this
     return df, report_metadata
 
 # ====================== MAIN APP WITH TABS ======================
@@ -643,10 +645,19 @@ with tab1:
         else:
             st.info("No respondent comments available for this report.")
 
-    st.subheader("📊 6-Month Sector Momentum")
-    pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
+        st.subheader("📊 6-Month Sector Momentum")
+    
+    # Fixed: safely handle any duplicate (industry, date) rows
+    pivot = df_master.pivot_table(
+        index="industry", 
+        columns="date", 
+        values="score", 
+        aggfunc="last"          # takes the latest value if duplicates exist
+    ).fillna(0)
+    
     pivot = pivot.reindex(INDUSTRIES)
     pivot.columns = pivot.columns.strftime('%b %Y')
+    
     fig = px.imshow(
         pivot,
         labels=dict(x="Report Month", y="Industry", color="Score"),
@@ -656,7 +667,7 @@ with tab1:
         aspect="auto"
     )
     fig.update_layout(height=600, xaxis_title="")
-    st.plotly_chart(fig, use_container_width=True, key="momentum_chart")   # ← unique key fixes duplicate ID
+    st.plotly_chart(fig, use_container_width=True, key="momentum_chart")
 
     st.subheader("Industry Score Evolution")
     to_track = st.multiselect("Select industries to compare:", INDUSTRIES, 
