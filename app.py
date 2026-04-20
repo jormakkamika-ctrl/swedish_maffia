@@ -509,14 +509,17 @@ subcomponents = latest_meta.get("subcomponents", {})
 
 tab1, tab2 = st.tabs(["🏭 Primary Effects", "🔬 Fund Manager Macro Scoring"])
 
-# ====================== TAB 1: PRIMARY EFFECTS ======================
+# ====================== TAB 1: PRIMARY EFFECTS (Friend's View) ======================
 with tab1:
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # Headline PMI + Sub-indices (unchanged)
-    st.metric(label="**Manufacturing PMI**", value=f"{pmi_val:.1f}",
-              delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
-              delta_color="normal" if pmi_val > 50 else "inverse")
+    # === 1. HEADLINE PMI + SUB-INDICES (exactly as before) ===
+    st.metric(
+        label="**Manufacturing PMI**",
+        value=f"{pmi_val:.1f}",
+        delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
+        delta_color="normal" if pmi_val > 50 else "inverse"
+    )
 
     metric_cols = st.columns(5)
     keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
@@ -537,24 +540,10 @@ with tab1:
 
     st.divider()
 
-    # === 2. INDUSTRY RANKINGS (exactly as before) ===
-    st.subheader("📊 Industry Rankings (Ordered by Growth)")
-    styled_df = (
-        current_df[["industry", "score"]]
-        .sort_values("score", ascending=False)
-        .style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
-        .format({"score": "{:+d}"})
-        .set_properties(**{"font-weight": "bold"})
-    )
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # === CLICKABLE INDUSTRY RANKINGS ===
+    # === 2. SINGLE CLICKABLE INDUSTRY RANKINGS (no duplication) ===
     st.subheader("📊 Industry Rankings (Ordered by Growth) — Click to select")
     st.caption("Select one or more rows below → then press the basket button")
 
-    # Make the table selectable
     ranked_df = current_df[["industry", "score"]].sort_values("score", ascending=False).reset_index(drop=True)
     selected_rows = st.dataframe(
         ranked_df.style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
@@ -562,29 +551,32 @@ with tab1:
         .set_properties(**{"font-weight": "bold"}),
         use_container_width=True,
         hide_index=True,
-        selection_mode="multi-row",          # ← makes it clickable
+        selection_mode="multi-row",
         on_select="rerun"
     )
-    # === 3. NAICS MAPPING (new - shows exact ISM ↔ NAICS link) ===
-    st.subheader("🔗 Official NAICS Mapping (ISM → Production Category)")
-    naics_df = pd.DataFrame(list(NAICS_MAPPING.items()), columns=["ISM Industry", "NAICS Code(s)"])
-    st.dataframe(naics_df, use_container_width=True, hide_index=True)
 
     st.divider()
 
-    # === PRIMARY EFFECT STOCK BASKETS (now respects selection) ===
+    # === 3. NAICS MAPPING — now collapsible (expandable section) ===
+    with st.expander("🔗 Official NAICS Mapping (ISM → Production Category)", expanded=False):
+        naics_df = pd.DataFrame(list(NAICS_MAPPING.items()), columns=["ISM Industry", "NAICS Code(s)"])
+        st.dataframe(naics_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # === 4. PRIMARY EFFECT STOCK BASKETS (now respects selection + very light) ===
     st.subheader("📦 Primary Effect Stock Baskets")
-    st.caption("**Direct NAICS-mapped companies** • Only selected industries will be processed (much lighter)")
+    st.caption("**Direct NAICS-mapped companies** • NYSE/Nasdaq > $1B MC • Only selected industries are processed")
 
     if st.button("🚀 Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
-        stocks_df = get_full_stock_universe()  # still cached, called only once
+        stocks_df = get_full_stock_universe()  # cached once — very fast
         if not stocks_df.empty:
-            # Get selected industries (or fallback to all growing/contracting)
             if len(selected_rows["selection"]["rows"]) > 0:
                 selected_indices = selected_rows["selection"]["rows"]
                 selected_industries = ranked_df.iloc[selected_indices]["industry"].tolist()
-                st.info(f"Filtering for {len(selected_industries)} selected industry(ies)")
+                st.success(f"✅ Filtering for {len(selected_industries)} selected industry(ies)")
             else:
+                # fallback = all growing + contracting
                 selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
 
             for industry in selected_industries:
@@ -600,9 +592,13 @@ with tab1:
 
                 with st.expander(f"**{industry} — {direction}** ({len(filtered)} stocks)", expanded=True):
                     st.markdown(f"<span style='color:{color}'>**Primary Effect via NAICS {NAICS_MAPPING.get(industry, '—')}**</span>", unsafe_allow_html=True)
-                    st.dataframe(filtered[["Ticker", "Company", "Yahoo Industry", "Market Cap"]], use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        filtered[["Ticker", "Company", "Yahoo Industry", "Market Cap"]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
-    # === 5. Respondent Comments, 6-Month Momentum, Industry Score Evolution (exactly as before) ===
+    # === 5. Respondent Comments, 6-Month Momentum, Industry Score Evolution (unchanged) ===
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
             st.markdown("\n\n".join(comments_list))
@@ -613,15 +609,24 @@ with tab1:
     pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
     pivot = pivot.reindex(INDUSTRIES)
     pivot.columns = pivot.columns.strftime('%b %Y')
-    fig = px.imshow(pivot, labels=dict(x="Report Month", y="Industry", color="Score"), color_continuous_scale="RdYlGn", color_continuous_midpoint=0, text_auto=True, aspect="auto")
+    fig = px.imshow(
+        pivot,
+        labels=dict(x="Report Month", y="Industry", color="Score"),
+        color_continuous_scale="RdYlGn",
+        color_continuous_midpoint=0,
+        text_auto=True,
+        aspect="auto"
+    )
     fig.update_layout(height=600, xaxis_title="")
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Industry Score Evolution")
-    to_track = st.multiselect("Select industries to compare:", INDUSTRIES, default=["Transportation Equipment", "Chemical Products", "Computer & Electronic Products"])
+    to_track = st.multiselect("Select industries to compare:", INDUSTRIES, 
+                              default=["Transportation Equipment", "Chemical Products", "Computer & Electronic Products"])
     if to_track:
         line_df = df_master[df_master['industry'].isin(to_track)].sort_values('date')
-        fig_line = px.line(line_df, x='date', y='score', color='industry', markers=True, line_shape='spline', title="Relative Growth/Contraction Trends")
+        fig_line = px.line(line_df, x='date', y='score', color='industry', markers=True,
+                           line_shape='spline', title="Relative Growth/Contraction Trends")
         st.plotly_chart(fig_line, use_container_width=True)
 
 # ====================== TAB 2: FUND MANAGER MACRO SCORING (Secondary Effects) ======================
@@ -760,11 +765,11 @@ if to_track:
                        line_shape='spline', title="Relative Growth/Contraction Trends")
     st.plotly_chart(fig_line, use_container_width=True)
 
-# ====================== SIDEBAR ======================
+# ====================== SIDEBAR (Deep Refresh button restored) ======================
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url})")
-    st.caption("**Sub-indices parser + Economic Exposure Ontology now live**")
-    if st.button("Deep Refresh (Scrape Archive)"):
+    st.caption("**Tab 1 = Primary Effects (NAICS direct)**\n**Tab 2 = Fund Manager Secondary / Macro Drivers**")
+    if st.button("🔄 Deep Refresh (Scrape Archive)"):
         st.cache_data.clear()
         st.rerun()
