@@ -507,7 +507,7 @@ report_url = latest_meta.get("url", "#")
 comments_list = latest_meta.get("comments", [])
 subcomponents = latest_meta.get("subcomponents", {})
 
-tab1, tab2 = st.tabs(["🏭 Primary Effects (Friend's View)", "🔬 Fund Manager Macro Scoring"])
+tab1, tab2 = st.tabs(["🏭 Primary Effects", "🔬 Fund Manager Macro Scoring"])
 
 # ====================== TAB 1: PRIMARY EFFECTS ======================
 with tab1:
