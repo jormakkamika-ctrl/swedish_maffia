@@ -527,7 +527,7 @@ def build_historical_dataset():
     
     st.success(f"✅ Loaded {len(df['date'].unique())} historical ISM reports")
     df = pd.DataFrame(all_data)
-        df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)  # ← add this
+    df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)  # ← add this
     return df, report_metadata
 
 # ====================== MAIN APP WITH TABS ======================
