@@ -25,7 +25,52 @@ INDUSTRIES = [
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-# ====================== ECONOMIC EXPOSURE ONTOLOGY ======================
+# ====================== NAICS MAPPING (exact ISM → NAICS) ======================
+NAICS_MAPPING = {
+    "Food, Beverage & Tobacco Products": "311, 312",
+    "Textile Mills": "313",
+    "Apparel, Leather & Allied Products": "315, 316",
+    "Wood Products": "321",
+    "Paper Products": "322",
+    "Printing & Related Support Activities": "323",
+    "Petroleum & Coal Products": "324",
+    "Chemical Products": "325",
+    "Plastics & Rubber Products": "326",
+    "Nonmetallic Mineral Products": "327",
+    "Primary Metals": "331",
+    "Fabricated Metal Products": "332",
+    "Machinery": "333",
+    "Computer & Electronic Products": "334",
+    "Electrical Equipment, Appliances & Components": "335",
+    "Transportation Equipment": "336",
+    "Furniture & Related Products": "337",
+    "Miscellaneous Manufacturing": "339",
+}
+
+# ====================== PRIMARY ISM → YAHOO INDUSTRY MAPPING (broad but still primary) ======================
+# Expanded to cover ~1,500 >$1B stocks dynamically when filtering the full universe
+PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
+    "Food, Beverage & Tobacco Products": ["Packaged Foods", "Beverages - Non-Alcoholic", "Tobacco", "Confectioners", "Farm Products"],
+    "Textile Mills": ["Textile Manufacturing", "Apparel Manufacturing"],
+    "Apparel, Leather & Allied Products": ["Apparel Manufacturing", "Footwear & Accessories"],
+    "Wood Products": ["Lumber & Wood Production", "Building Materials", "Residential Construction"],
+    "Paper Products": ["Paper & Forest Products", "Packaging & Containers"],
+    "Printing & Related Support Activities": ["Packaging & Containers", "Specialty Industrial Machinery"],
+    "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream"],
+    "Chemical Products": ["Chemicals", "Specialty Chemicals"],
+    "Plastics & Rubber Products": ["Packaging & Containers", "Rubber & Plastics"],
+    "Nonmetallic Mineral Products": ["Building Materials", "Construction Materials"],
+    "Primary Metals": ["Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining"],
+    "Fabricated Metal Products": ["Metal Fabrication", "Tools & Accessories"],
+    "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery"],
+    "Computer & Electronic Products": ["Semiconductors", "Electronic Components", "Computer Hardware"],
+    "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts", "Specialty Industrial Machinery"],
+    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts"],
+    "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
+    "Miscellaneous Manufacturing": ["Medical Instruments & Supplies", "Leisure"],
+}
+
+# ====================== ECONOMIC EXPOSURE ONTOLOGY (unchanged - for Tab 2) ======================
 class DriverName(str, Enum):
     DEMAND_MOMENTUM = "Demand Momentum"
     CAPEX_PRESSURE = "Capex & Capacity Pressure"
@@ -60,7 +105,6 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
 
     drivers: Dict[DriverName, EconomicDriver] = {}
 
-    # Demand Momentum
     demand_strength = np.mean([
         normalize_signal(signals["new_orders"].get("current", 50), signals["new_orders"].get("change", 0), signals["new_orders"].get("trend", 0)),
         normalize_signal(signals["backlog"].get("current", 50), signals["backlog"].get("change", 0), signals["backlog"].get("trend", 0)),
@@ -71,7 +115,6 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
         description="Forward revenue visibility & sustained order flow"
     )
 
-    # Capex & Capacity Pressure
     capex_strength = np.mean([
         normalize_signal(signals["backlog"].get("current", 50), signals["backlog"].get("change", 0), signals["backlog"].get("trend", 0)),
         normalize_signal(signals["production"].get("current", 50), signals["production"].get("change", 0), signals["production"].get("trend", 0)),
@@ -82,7 +125,6 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
         description="Capacity constraints → future capital spending"
     )
 
-    # Input Cost Inflation
     drivers[DriverName.INPUT_COST_INFLATION] = EconomicDriver(
         name=DriverName.INPUT_COST_INFLATION,
         strength=round(normalize_signal(signals["prices_paid"].get("current", 50), signals["prices_paid"].get("change", 0), signals["prices_paid"].get("trend", 0)), 2),
@@ -90,7 +132,6 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
         description="Input-cost pressure or pricing power"
     )
 
-    # Labor Market Tightness
     drivers[DriverName.LABOR_TIGHTNESS] = EconomicDriver(
         name=DriverName.LABOR_TIGHTNESS,
         strength=round(normalize_signal(signals["employment"].get("current", 50), signals["employment"].get("change", 0), signals["employment"].get("trend", 0)), 2),
@@ -98,7 +139,6 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
         description="Hiring plans & wage pressure"
     )
 
-    # Placeholders
     drivers[DriverName.INVENTORY_RESTOCKING] = EconomicDriver(name=DriverName.INVENTORY_RESTOCKING, strength=0.0, signals_used=["Inventories (future)"], description="Inventory drawdown → restocking")
     drivers[DriverName.SECTOR_SPECIFIC_STRENGTH] = EconomicDriver(name=DriverName.SECTOR_SPECIFIC_STRENGTH, strength=0.0, signals_used=["ISM Industry List"], description="Direct end-market momentum")
 
@@ -449,7 +489,7 @@ def build_historical_dataset():
         st.error(f"Archive Fetch Error: {e}")
     return pd.DataFrame(all_data), report_metadata
 
-# ====================== MAIN APP ======================
+# ====================== MAIN APP WITH TABS ======================
 st.title("🏭 ISM Manufacturing Intelligence Hub")
 
 with st.spinner("Rebuilding 6-month sector history from PR Newswire..."):
@@ -467,65 +507,124 @@ report_url = latest_meta.get("url", "#")
 comments_list = latest_meta.get("comments", [])
 subcomponents = latest_meta.get("subcomponents", {})
 
-st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
+tab1, tab2 = st.tabs(["🏭 Primary Effects (Friend's View)", "🔬 Fund Manager Macro Scoring"])
 
-# === 1. HEADLINE MANUFACTURING PMI (restored as big prominent metric) ===
-st.metric(
-    label="**Manufacturing PMI**",
-    value=f"{pmi_val:.1f}",
-    delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
-    delta_color="normal" if pmi_val > 50 else "inverse"
-)
+# ====================== TAB 1: PRIMARY EFFECTS (Friend's direct ISM → stocks) ======================
+with tab1:
+    st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-# === 2. SUB-INDICES ROW (unchanged — best-in-class) ===
-metric_cols = st.columns(5)
-keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
-labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
-for i, (key, label) in enumerate(zip(keys, labels)):
-    data = subcomponents.get(key, {})
-    current = data.get("current")
-    change = data.get("change")
-    trend = data.get("trend")
-    if current is not None:
-        delta_str = f"{change:+.1f}/{trend}" if change is not None and trend is not None else None
-        delta_color = "normal" if current > 50 else "inverse"
-        with metric_cols[i]:
-            st.metric(label=label, value=f"{current:.1f}", delta=delta_str, delta_color=delta_color)
-    else:
-        with metric_cols[i]:
-            st.metric(label=label, value="N/A")
+    # === 1. HEADLINE PMI + SUB-INDICES (exactly as before) ===
+    st.metric(
+        label="**Manufacturing PMI**",
+        value=f"{pmi_val:.1f}",
+        delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
+        delta_color="normal" if pmi_val > 50 else "inverse"
+    )
 
-st.divider()
+    metric_cols = st.columns(5)
+    keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
+    labels = ["New Orders", "Production", "Employment", "Prices Paid", "Backlog of Orders"]
+    for i, (key, label) in enumerate(zip(keys, labels)):
+        data = subcomponents.get(key, {})
+        current = data.get("current")
+        change = data.get("change")
+        trend = data.get("trend")
+        if current is not None:
+            delta_str = f"{change:+.1f}/{trend}" if change is not None and trend is not None else None
+            delta_color = "normal" if current > 50 else "inverse"
+            with metric_cols[i]:
+                st.metric(label=label, value=f"{current:.1f}", delta=delta_str, delta_color=delta_color)
+        else:
+            with metric_cols[i]:
+                st.metric(label=label, value="N/A")
 
-# === 3. INDUSTRY RANKINGS TABLE (restored exactly as before) ===
-st.subheader("📊 Industry Rankings (Ordered by Growth)")
-styled_df = (
-    current_df[["industry", "score"]]
-    .sort_values("score", ascending=False)
-    .style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
-    .format({"score": "{:+d}"})
-    .set_properties(**{"font-weight": "bold"})
-)
-st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.divider()
 
-st.divider()
+    # === 2. INDUSTRY RANKINGS (exactly as before) ===
+    st.subheader("📊 Industry Rankings (Ordered by Growth)")
+    styled_df = (
+        current_df[["industry", "score"]]
+        .sort_values("score", ascending=False)
+        .style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
+        .format({"score": "{:+d}"})
+        .set_properties(**{"font-weight": "bold"})
+    )
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# === 4. ECONOMIC DRIVER SIGNALS (placed exactly where you asked) ===
-st.subheader("🔬 Economic Driver Signals (Professional Macro Translation)")
-drivers = calculate_drivers(subcomponents)
-driver_cols = st.columns(len(drivers))
-for idx, (driver_name, driver) in enumerate(drivers.items()):
-    with driver_cols[idx]:
-        color = "normal" if driver.strength > 0 else "inverse"
-        st.metric(
-            label=driver.name,
-            value=f"{driver.strength:+.2f}",
-            delta=driver.description,
-            delta_color=color
-        )
-        st.caption(" | ".join(driver.signals_used))
+    st.divider()
 
-st.divider()
+    # === 3. NAICS MAPPING (new - shows exact ISM ↔ NAICS link) ===
+    st.subheader("🔗 Official NAICS Mapping (ISM → Production Category)")
+    naics_df = pd.DataFrame(list(NAICS_MAPPING.items()), columns=["ISM Industry", "NAICS Code(s)"])
+    st.dataframe(naics_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # === 4. PRIMARY EFFECT STOCK BASKETS (broad coverage of ~1500 stocks) ===
+    st.subheader("📦 Primary Effect Stock Baskets")
+    st.caption("**Direct NAICS-mapped companies** • NYSE/Nasdaq > $1B MC • Click to generate for current report")
+
+    if st.button("🚀 Generate Primary Effect Baskets (Full ~1,500+ stock universe)", type="primary", use_container_width=True):
+        stocks_df = get_full_stock_universe()  # your existing function
+        if not stocks_df.empty:
+            growing = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score > 0]
+            contracting = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score < 0]
+
+            st.success(f"✅ Generated baskets for {len(growing)} growing + {len(contracting)} contracting industries")
+
+            for industry in growing + contracting:
+                direction = "GROWTH" if industry in growing else "CONTRACTION"
+                color = "green" if direction == "GROWTH" else "red"
+
+                yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
+                if not yahoo_industries:
+                    continue
+
+                filtered = stocks_df[stocks_df["Yahoo Industry"].isin(yahoo_industries)].copy()
+                filtered = filtered.sort_values("Market Cap", ascending=False).head(30)  # top 30 per basket to keep UI clean
+
+                with st.expander(f"**{industry} — {direction}** ({len(filtered)} stocks)", expanded=True):
+                    st.markdown(f"<span style='color:{color}'>**Primary Effect via NAICS {NAICS_MAPPING.get(industry, '—')}**</span>", unsafe_allow_html=True)
+                    st.dataframe(
+                        filtered[["Ticker", "Company", "Yahoo Industry", "Market Cap"]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+    # === 5. Respondent Comments, 6-Month Momentum, Industry Score Evolution (exactly as before) ===
+    with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
+        if comments_list:
+            st.markdown("\n\n".join(comments_list))
+        else:
+            st.info("No respondent comments available for this report.")
+
+    st.subheader("📊 6-Month Sector Momentum")
+    pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
+    pivot = pivot.reindex(INDUSTRIES)
+    pivot.columns = pivot.columns.strftime('%b %Y')
+    fig = px.imshow(pivot, labels=dict(x="Report Month", y="Industry", color="Score"), color_continuous_scale="RdYlGn", color_continuous_midpoint=0, text_auto=True, aspect="auto")
+    fig.update_layout(height=600, xaxis_title="")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Industry Score Evolution")
+    to_track = st.multiselect("Select industries to compare:", INDUSTRIES, default=["Transportation Equipment", "Chemical Products", "Computer & Electronic Products"])
+    if to_track:
+        line_df = df_master[df_master['industry'].isin(to_track)].sort_values('date')
+        fig_line = px.line(line_df, x='date', y='score', color='industry', markers=True, line_shape='spline', title="Relative Growth/Contraction Trends")
+        st.plotly_chart(fig_line, use_container_width=True)
+
+# ====================== TAB 2: FUND MANAGER MACRO SCORING (Secondary Effects) ======================
+with tab2:
+    st.subheader("🔬 Economic Driver Signals (Professional Macro Translation)")
+    drivers = calculate_drivers(subcomponents)
+    driver_cols = st.columns(len(drivers))
+    for idx, (driver_name, driver) in enumerate(drivers.items()):
+        with driver_cols[idx]:
+            color = "normal" if driver.strength > 0 else "inverse"
+            st.metric(label=driver.name, value=f"{driver.strength:+.2f}", delta=driver.description, delta_color=color)
+            st.caption(" | ".join(driver.signals_used))
+
+    st.divider()
 
 # ====================== ISM-LEVERAGED STOCK IDEAS ======================
 st.subheader("🔥 ISM-Leveraged Stock Ideas")
