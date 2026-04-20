@@ -446,48 +446,87 @@ def parse_report_text(text: str):
 
 @st.cache_data(ttl=86400)
 def build_historical_dataset():
+    """Robust scraper with retries + longer timeout + graceful fallback."""
     all_data = []
     report_metadata = {}
+    
     archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
-    try:
-        r = requests.get(archive_url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-        links = [a['href'] for a in soup.find_all('a', href=True) if "manufacturing-pmi-report" in a['href'].lower()]
-        for url in list(dict.fromkeys(links))[:8]:
-            full_url = "https://www.prnewswire.com" + url if url.startswith('/') else url
-            resp = requests.get(full_url, headers=HEADERS, timeout=10)
-            raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
-            pmi, m_year, growth, contr, comments, subcomponents = parse_report_text(raw_text)
-            if m_year == "Unknown":
+    
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    
+    for attempt in range(3):  # 3 attempts
+        try:
+            r = session.get(archive_url, timeout=30)  # increased from 15s
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
+            
+            # Find all report links (updated pattern that works on current site)
+            links = [a['href'] for a in soup.find_all('a', href=True) 
+                    if any(x in a['href'].lower() for x in ["manufacturing-pmi", "ism-manufacturing", "report-on-business"])]
+            
+            # Deduplicate and take most recent 8
+            links = list(dict.fromkeys(links))[:8]
+            
+            for url in links:
+                full_url = "https://www.prnewswire.com" + url if url.startswith('/') else url
+                try:
+                    resp = session.get(full_url, timeout=25)
+                    raw_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
+                    
+                    pmi, m_year, growth, contr, comments, subcomponents = parse_report_text(raw_text)
+                    if m_year == "Unknown":
+                        continue
+                        
+                    date_obj = pd.to_datetime(m_year)
+                    report_metadata[date_obj] = {
+                        "comments": comments,
+                        "pmi": pmi,
+                        "subcomponents": subcomponents,
+                        "url": full_url
+                    }
+                    
+                    # Build monthly industry scores
+                    n_g, n_c = len(growth), len(contr)
+                    month_scores = {ind: 0 for ind in INDUSTRIES}
+                    for i, s in enumerate(growth):
+                        norm = normalize_name(s)
+                        if norm in NORM_TO_OFFICIAL:
+                            month_scores[NORM_TO_OFFICIAL[norm]] = n_g - i
+                    for i, s in enumerate(contr):
+                        norm = normalize_name(s)
+                        if norm in NORM_TO_OFFICIAL:
+                            month_scores[NORM_TO_OFFICIAL[norm]] = -(n_c - i)
+                    
+                    for ind, score in month_scores.items():
+                        all_data.append({
+                            "date": date_obj,
+                            "industry": ind,
+                            "score": score,
+                            "pmi": pmi,
+                            "url": full_url
+                        })
+                except:
+                    continue
+                    
+            break  # success on this attempt
+            
+        except Exception as e:
+            if attempt == 2:  # last attempt
+                st.warning(f"⚠️ Archive fetch failed after retries: {str(e)[:80]}... Using cached/current data only.")
+            else:
+                time.sleep(2 ** attempt)  # exponential backoff
                 continue
-            date_obj = pd.to_datetime(m_year)
-            report_metadata[date_obj] = {
-                "comments": comments,
-                "pmi": pmi,
-                "subcomponents": subcomponents,
-                "url": full_url
-            }
-            n_g, n_c = len(growth), len(contr)
-            month_scores = {ind: 0 for ind in INDUSTRIES}
-            for i, s in enumerate(growth):
-                norm = normalize_name(s)
-                if norm in NORM_TO_OFFICIAL:
-                    month_scores[NORM_TO_OFFICIAL[norm]] = n_g - i
-            for i, s in enumerate(contr):
-                norm = normalize_name(s)
-                if norm in NORM_TO_OFFICIAL:
-                    month_scores[NORM_TO_OFFICIAL[norm]] = -(n_c - i)
-            for ind, score in month_scores.items():
-                all_data.append({
-                    "date": date_obj,
-                    "industry": ind,
-                    "score": score,
-                    "pmi": pmi,
-                    "url": full_url
-                })
-    except Exception as e:
-        st.error(f"Archive Fetch Error: {e}")
-    return pd.DataFrame(all_data), report_metadata
+    
+    df = pd.DataFrame(all_data)
+    
+    if df.empty:
+        st.warning("⚠️ Could not fetch historical archive. Current report will still work. Try Deep Refresh later.")
+        # Return empty but don't crash the app
+        return pd.DataFrame(columns=["date", "industry", "score", "pmi", "url"]), {}
+    
+    st.success(f"✅ Loaded {len(df['date'].unique())} historical ISM reports")
+    return df, report_metadata
 
 # ====================== MAIN APP WITH TABS ======================
 st.title("🏭 ISM Manufacturing Intelligence Hub")
