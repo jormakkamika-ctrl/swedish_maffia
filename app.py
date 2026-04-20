@@ -492,11 +492,11 @@ def build_historical_dataset():
 # ====================== MAIN APP WITH TABS ======================
 st.title("🏭 ISM Manufacturing Intelligence Hub")
 
-with st.spinner("Rebuilding 6-month sector history from PR Newswire..."):
+with st.spinner("Rebuilding 6-month sector history..."):
     df_master, report_metadata = build_historical_dataset()
 
 if df_master.empty:
-    st.error("No data found. Please check the scraper settings or the Source URL.")
+    st.error("No data found.")
     st.stop()
 
 latest_date = df_master['date'].max()
@@ -509,17 +509,14 @@ subcomponents = latest_meta.get("subcomponents", {})
 
 tab1, tab2 = st.tabs(["🏭 Primary Effects (Friend's View)", "🔬 Fund Manager Macro Scoring"])
 
-# ====================== TAB 1: PRIMARY EFFECTS (Friend's direct ISM → stocks) ======================
+# ====================== TAB 1: PRIMARY EFFECTS ======================
 with tab1:
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # === 1. HEADLINE PMI + SUB-INDICES (exactly as before) ===
-    st.metric(
-        label="**Manufacturing PMI**",
-        value=f"{pmi_val:.1f}",
-        delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
-        delta_color="normal" if pmi_val > 50 else "inverse"
-    )
+    # Headline PMI + Sub-indices (unchanged)
+    st.metric(label="**Manufacturing PMI**", value=f"{pmi_val:.1f}",
+              delta=f"{'Above 50 (Expansion)' if pmi_val > 50 else 'Below 50 (Contraction)'}",
+              delta_color="normal" if pmi_val > 50 else "inverse")
 
     metric_cols = st.columns(5)
     keys = ["New Orders", "Production", "Employment", "Prices", "Backlog of Orders"]
@@ -553,6 +550,21 @@ with tab1:
 
     st.divider()
 
+    # === CLICKABLE INDUSTRY RANKINGS ===
+    st.subheader("📊 Industry Rankings (Ordered by Growth) — Click to select")
+    st.caption("Select one or more rows below → then press the basket button")
+
+    # Make the table selectable
+    ranked_df = current_df[["industry", "score"]].sort_values("score", ascending=False).reset_index(drop=True)
+    selected_rows = st.dataframe(
+        ranked_df.style.background_gradient(cmap="RdYlGn", subset=["score"], vmin=-13, vmax=13)
+        .format({"score": "{:+d}"})
+        .set_properties(**{"font-weight": "bold"}),
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="multi-row",          # ← makes it clickable
+        on_select="rerun"
+    )
     # === 3. NAICS MAPPING (new - shows exact ISM ↔ NAICS link) ===
     st.subheader("🔗 Official NAICS Mapping (ISM → Production Category)")
     naics_df = pd.DataFrame(list(NAICS_MAPPING.items()), columns=["ISM Industry", "NAICS Code(s)"])
@@ -560,20 +572,23 @@ with tab1:
 
     st.divider()
 
-    # === 4. PRIMARY EFFECT STOCK BASKETS (broad coverage of ~1500 stocks) ===
+    # === PRIMARY EFFECT STOCK BASKETS (now respects selection) ===
     st.subheader("📦 Primary Effect Stock Baskets")
-    st.caption("**Direct NAICS-mapped companies** • NYSE/Nasdaq > $1B MC • Click to generate for current report")
+    st.caption("**Direct NAICS-mapped companies** • Only selected industries will be processed (much lighter)")
 
-    if st.button("🚀 Generate Primary Effect Baskets (Full ~1,500+ stock universe)", type="primary", use_container_width=True):
-        stocks_df = get_full_stock_universe()  # your existing function
+    if st.button("🚀 Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
+        stocks_df = get_full_stock_universe()  # still cached, called only once
         if not stocks_df.empty:
-            growing = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score > 0]
-            contracting = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score < 0]
+            # Get selected industries (or fallback to all growing/contracting)
+            if len(selected_rows["selection"]["rows"]) > 0:
+                selected_indices = selected_rows["selection"]["rows"]
+                selected_industries = ranked_df.iloc[selected_indices]["industry"].tolist()
+                st.info(f"Filtering for {len(selected_industries)} selected industry(ies)")
+            else:
+                selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
 
-            st.success(f"✅ Generated baskets for {len(growing)} growing + {len(contracting)} contracting industries")
-
-            for industry in growing + contracting:
-                direction = "GROWTH" if industry in growing else "CONTRACTION"
+            for industry in selected_industries:
+                direction = "GROWTH" if current_df.loc[current_df['industry'] == industry, 'score'].iloc[0] > 0 else "CONTRACTION"
                 color = "green" if direction == "GROWTH" else "red"
 
                 yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
@@ -581,15 +596,11 @@ with tab1:
                     continue
 
                 filtered = stocks_df[stocks_df["Yahoo Industry"].isin(yahoo_industries)].copy()
-                filtered = filtered.sort_values("Market Cap", ascending=False).head(30)  # top 30 per basket to keep UI clean
+                filtered = filtered.sort_values("Market Cap", ascending=False).head(30)
 
                 with st.expander(f"**{industry} — {direction}** ({len(filtered)} stocks)", expanded=True):
                     st.markdown(f"<span style='color:{color}'>**Primary Effect via NAICS {NAICS_MAPPING.get(industry, '—')}**</span>", unsafe_allow_html=True)
-                    st.dataframe(
-                        filtered[["Ticker", "Company", "Yahoo Industry", "Market Cap"]],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    st.dataframe(filtered[["Ticker", "Company", "Yahoo Industry", "Market Cap"]], use_container_width=True, hide_index=True)
 
     # === 5. Respondent Comments, 6-Month Momentum, Industry Score Evolution (exactly as before) ===
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
