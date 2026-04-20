@@ -509,11 +509,11 @@ subcomponents = latest_meta.get("subcomponents", {})
 
 tab1, tab2 = st.tabs(["🏭 Primary Effects", "🔬 Fund Manager Macro Scoring"])
 
-# ====================== TAB 1: PRIMARY EFFECTS (Friend's View) ======================
+# ====================== TAB 1: PRIMARY EFFECTS ======================
 with tab1:
     st.subheader(f"Current Report: {latest_date.strftime('%B %Y')}")
 
-    # === 1. HEADLINE PMI + SUB-INDICES (exactly as before) ===
+    # Headline PMI + Sub-indices
     st.metric(
         label="**Manufacturing PMI**",
         value=f"{pmi_val:.1f}",
@@ -540,9 +540,9 @@ with tab1:
 
     st.divider()
 
-    # === 2. SINGLE CLICKABLE INDUSTRY RANKINGS (no duplication) ===
+    # Clickable Industry Rankings (single version)
     st.subheader("📊 Industry Rankings (Ordered by Growth) — Click to select")
-    st.caption("Select one or more rows below → then press the basket button")
+    st.caption("Select one or more rows → then press the basket button")
 
     ranked_df = current_df[["industry", "score"]].sort_values("score", ascending=False).reset_index(drop=True)
     selected_rows = st.dataframe(
@@ -557,26 +557,25 @@ with tab1:
 
     st.divider()
 
-    # === 3. NAICS MAPPING — now collapsible (expandable section) ===
+    # NAICS Mapping — collapsed by default
     with st.expander("🔗 Official NAICS Mapping (ISM → Production Category)", expanded=False):
         naics_df = pd.DataFrame(list(NAICS_MAPPING.items()), columns=["ISM Industry", "NAICS Code(s)"])
         st.dataframe(naics_df, use_container_width=True, hide_index=True)
 
     st.divider()
 
-    # === 4. PRIMARY EFFECT STOCK BASKETS (now respects selection + very light) ===
+    # Primary Effect Stock Baskets
     st.subheader("📦 Primary Effect Stock Baskets")
-    st.caption("**Direct NAICS-mapped companies** • NYSE/Nasdaq > $1B MC • Only selected industries are processed")
+    st.caption("**Direct NAICS-mapped companies** • Only selected industries are processed")
 
     if st.button("🚀 Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
-        stocks_df = get_full_stock_universe()  # cached once — very fast
+        stocks_df = get_full_stock_universe()
         if not stocks_df.empty:
             if len(selected_rows["selection"]["rows"]) > 0:
                 selected_indices = selected_rows["selection"]["rows"]
                 selected_industries = ranked_df.iloc[selected_indices]["industry"].tolist()
                 st.success(f"✅ Filtering for {len(selected_industries)} selected industry(ies)")
             else:
-                # fallback = all growing + contracting
                 selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
 
             for industry in selected_industries:
@@ -598,7 +597,7 @@ with tab1:
                         hide_index=True
                     )
 
-    # === 5. Respondent Comments, 6-Month Momentum, Industry Score Evolution (unchanged) ===
+    # === Respondent Comments, 6-Month Momentum, Industry Score Evolution ===
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
             st.markdown("\n\n".join(comments_list))
@@ -618,7 +617,7 @@ with tab1:
         aspect="auto"
     )
     fig.update_layout(height=600, xaxis_title="")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="momentum_chart")   # ← unique key fixes duplicate ID
 
     st.subheader("Industry Score Evolution")
     to_track = st.multiselect("Select industries to compare:", INDUSTRIES, 
@@ -627,7 +626,7 @@ with tab1:
         line_df = df_master[df_master['industry'].isin(to_track)].sort_values('date')
         fig_line = px.line(line_df, x='date', y='score', color='industry', markers=True,
                            line_shape='spline', title="Relative Growth/Contraction Trends")
-        st.plotly_chart(fig_line, use_container_width=True)
+        st.plotly_chart(fig_line, use_container_width=True, key="evolution_chart")   # ← unique key
 
 # ====================== TAB 2: FUND MANAGER MACRO SCORING (Secondary Effects) ======================
 with tab2:
@@ -642,130 +641,86 @@ with tab2:
 
     st.divider()
 
-# ====================== ISM-LEVERAGED STOCK IDEAS ======================
-st.subheader("🔥 ISM-Leveraged Stock Ideas")
-st.caption("**Full NYSE + NASDAQ** • Market Cap > $1B • Scored by economic exposure")
-
-if st.button("🚀 Generate Ranked Ideas (Full Universe)", type="primary", use_container_width=True):
-    with st.spinner("Fetching full universe (~10k tickers) + applying macro scoring..."):
-        stocks_df = get_full_stock_universe()
-        if not stocks_df.empty:
-            scored_df = tag_and_score_stocks(stocks_df, drivers)
-            st.success(f"✅ Scored {len(scored_df)} stocks")
-            display_cols = ["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]
-            st.dataframe(
-                scored_df.head(30)[display_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Market Cap": st.column_config.TextColumn("Market Cap"),
-                    "Company": st.column_config.TextColumn("Company", width="medium"),
-                    "why": st.column_config.TextColumn("Why this stock?", width="large"),
-                    "ism_score": st.column_config.NumberColumn("ISM Score", format="%.2f"),
-                }
-            )
-        else:
-            st.error("❌ Could not fetch stock universe.")
-
-# ====================== HISTORICAL BACKTEST ======================
-st.subheader("📅 Historical Backtest (Test Past ISM Reports)")
-
-if report_metadata:
-    # Get sorted list of available historical dates
-    historical_dates = sorted(report_metadata.keys(), reverse=True)
-    date_options = [d.strftime('%B %Y') for d in historical_dates]
-    
-    selected_month_str = st.selectbox(
-        "Select a past ISM report to backtest:",
-        options=date_options,
-        index=0  # default to most recent (current month)
-    )
-    
-    # Map back to actual datetime object
-    selected_date = next(d for d in historical_dates if d.strftime('%B %Y') == selected_month_str)
-    
-    if st.button(f"🔄 Re-run Scoring for {selected_month_str}", type="primary", use_container_width=True):
-        with st.spinner(f"Re-calculating drivers + scoring for {selected_month_str}..."):
-            # Get historical subcomponents
-            hist_meta = report_metadata[selected_date]
-            hist_subcomponents = hist_meta.get("subcomponents", {})
-            
-            # Re-compute drivers for that past month
-            hist_drivers = calculate_drivers(hist_subcomponents)
-            
-            # Re-score the full stock universe with historical drivers
-            stocks_df = get_full_stock_universe()  # uses cached universe
+    # ====================== ISM-LEVERAGED STOCK IDEAS ======================
+    st.subheader("🔥 ISM-Leveraged Stock Ideas")
+    st.caption("**Full NYSE + NASDAQ** • Market Cap > $1B • Scored by economic exposure")
+    if st.button("🚀 Generate Ranked Ideas (Full Universe)", type="primary", use_container_width=True):
+        with st.spinner("Fetching full universe (~10k tickers) + applying macro scoring..."):
+            stocks_df = get_full_stock_universe()
             if not stocks_df.empty:
-                scored_hist = tag_and_score_stocks(stocks_df.copy(), hist_drivers)
-                
-                st.success(f"✅ Backtest complete for {selected_month_str} — Top ideas below")
-                
-                # Show the historical ranked table
+                scored_df = tag_and_score_stocks(stocks_df, drivers)
+                st.success(f"✅ Scored {len(scored_df)} stocks")
                 display_cols = ["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]
                 st.dataframe(
-                    scored_hist.head(30)[display_cols],
+                    scored_df.head(30)[display_cols],
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Market Cap": st.column_config.TextColumn("Market Cap"),
                         "Company": st.column_config.TextColumn("Company", width="medium"),
-                        "why": st.column_config.TextColumn("Why this stock scored high", width="large"),
+                        "why": st.column_config.TextColumn("Why this stock?", width="large"),
                         "ism_score": st.column_config.NumberColumn("ISM Score", format="%.2f"),
                     }
                 )
-                
-                # Quick driver snapshot for that month
-                st.caption("Economic Driver Signals for this historical month:")
-                driver_cols = st.columns(len(hist_drivers))
-                for idx, (d_name, driver) in enumerate(hist_drivers.items()):
-                    with driver_cols[idx]:
-                        color = "normal" if driver.strength > 0 else "inverse"
-                        st.metric(
-                            label=d_name,
-                            value=f"{driver.strength:+.2f}",
-                            delta=driver.description,
-                            delta_color=color
-                        )
             else:
-                st.error("No stock universe available for backtesting.")
-else:
-    st.info("No historical data available yet — run a Deep Refresh first.")
+                st.error("❌ Could not fetch stock universe.")
 
-st.divider()
-
-# ====================== RESPONDENT COMMENTS ======================
-with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
-    if comments_list:
-        st.markdown("\n\n".join(comments_list))
+    # ====================== HISTORICAL BACKTEST ======================
+    st.subheader("📅 Historical Backtest (Test Past ISM Reports)")
+    if report_metadata:
+        historical_dates = sorted(report_metadata.keys(), reverse=True)
+        date_options = [d.strftime('%B %Y') for d in historical_dates]
+       
+        selected_month_str = st.selectbox(
+            "Select a past ISM report to backtest:",
+            options=date_options,
+            index=0
+        )
+       
+        selected_date = next(d for d in historical_dates if d.strftime('%B %Y') == selected_month_str)
+       
+        if st.button(f"🔄 Re-run Scoring for {selected_month_str}", type="primary", use_container_width=True):
+            with st.spinner(f"Re-calculating drivers + scoring for {selected_month_str}..."):
+                hist_meta = report_metadata[selected_date]
+                hist_subcomponents = hist_meta.get("subcomponents", {})
+                hist_drivers = calculate_drivers(hist_subcomponents)
+               
+                stocks_df = get_full_stock_universe()
+                if not stocks_df.empty:
+                    scored_hist = tag_and_score_stocks(stocks_df.copy(), hist_drivers)
+                   
+                    st.success(f"✅ Backtest complete for {selected_month_str} — Top ideas below")
+                   
+                    display_cols = ["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]
+                    st.dataframe(
+                        scored_hist.head(30)[display_cols],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Market Cap": st.column_config.TextColumn("Market Cap"),
+                            "Company": st.column_config.TextColumn("Company", width="medium"),
+                            "why": st.column_config.TextColumn("Why this stock scored high", width="large"),
+                            "ism_score": st.column_config.NumberColumn("ISM Score", format="%.2f"),
+                        }
+                    )
+                   
+                    st.caption("Economic Driver Signals for this historical month:")
+                    driver_cols = st.columns(len(hist_drivers))
+                    for idx, (d_name, driver) in enumerate(hist_drivers.items()):
+                        with driver_cols[idx]:
+                            color = "normal" if driver.strength > 0 else "inverse"
+                            st.metric(
+                                label=d_name,
+                                value=f"{driver.strength:+.2f}",
+                                delta=driver.description,
+                                delta_color=color
+                            )
+                else:
+                    st.error("No stock universe available for backtesting.")
     else:
-        st.info("No respondent comments available for this report.")
+        st.info("No historical data available yet — run a Deep Refresh first.")
 
-# ====================== REMAINING FEATURES ======================
-st.subheader("📊 6-Month Sector Momentum")
-pivot = df_master.pivot(index="industry", columns="date", values="score").fillna(0)
-pivot = pivot.reindex(INDUSTRIES)
-pivot.columns = pivot.columns.strftime('%b %Y')
-fig = px.imshow(
-    pivot,
-    labels=dict(x="Report Month", y="Industry", color="Score"),
-    color_continuous_scale="RdYlGn",
-    color_continuous_midpoint=0,
-    text_auto=True,
-    aspect="auto"
-)
-fig.update_layout(height=600, xaxis_title="")
-st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("Industry Score Evolution")
-to_track = st.multiselect("Select industries to compare:", INDUSTRIES, 
-                          default=["Transportation Equipment", "Chemical Products", "Computer & Electronic Products"])
-if to_track:
-    line_df = df_master[df_master['industry'].isin(to_track)].sort_values('date')
-    fig_line = px.line(line_df, x='date', y='score', color='industry', markers=True,
-                       line_shape='spline', title="Relative Growth/Contraction Trends")
-    st.plotly_chart(fig_line, use_container_width=True)
-
-# ====================== SIDEBAR (Deep Refresh button restored) ======================
+# ====================== SIDEBAR ======================
 with st.sidebar:
     st.image("https://www.ismworld.org/globalassets/pub/logos/ism_manufacturing_pmi_logo.png", width=200)
     st.write(f"**Current Source:** [PR Newswire]({report_url})")
