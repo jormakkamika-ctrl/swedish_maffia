@@ -896,7 +896,7 @@ with tab1:
                            line_shape='spline', title="Relative Growth/Contraction Trends")
         st.plotly_chart(fig_line, use_container_width=True, key="evolution_chart")   # ← unique key
 
-# ====================== TAB 2: FUND MANAGER MACRO SCORING (PHASE 2 - INTERACTIVE) ======================
+# ====================== TAB 2: FUND MANAGER MACRO SCORING (PHASE 2 - FULLY INTERACTIVE) ======================
 with tab2:
     st.subheader("🔬 Economic Driver Signals (Professional Macro Translation)")
     
@@ -919,55 +919,60 @@ with tab2:
     st.subheader("🔥 ISM-Leveraged Stock Ideas")
     st.caption("Full NYSE + NASDAQ • > $1B • Click any row for deep dive")
 
+    # Generate button (only triggers scoring)
     if st.button("🚀 Generate Ranked Ideas (Full Universe)", type="primary", use_container_width=True):
         with st.spinner("Scoring full universe..."):
             stocks_df = get_full_stock_universe()
             if not stocks_df.empty:
                 scored_df = tag_and_score_stocks(stocks_df, drivers)
-                st.session_state.scored_df = scored_df   # store for selection
-
+                st.session_state.scored_df_tab2 = scored_df   # ← persist in session state
                 st.success(f"✅ Scored {len(scored_df):,} stocks")
 
-                # Sector Summary
-                sector_summary = (scored_df.groupby("Yahoo Industry")
-                                  .agg(Avg_Score=("ism_score", "mean"), Num_Stocks=("Ticker", "count"))
-                                  .round(3).sort_values("Avg_Score", ascending=False).reset_index())
-                st.subheader("📊 Sector Summary")
-                st.dataframe(sector_summary, use_container_width=True, hide_index=True)
+    # Display logic — always visible after first generation
+    if "scored_df_tab2" in st.session_state:
+        scored_df = st.session_state.scored_df_tab2
 
-                st.divider()
+        # Sector Summary
+        sector_summary = (scored_df.groupby("Yahoo Industry")
+                          .agg(Avg_Score=("ism_score", "mean"), Num_Stocks=("Ticker", "count"))
+                          .round(3).sort_values("Avg_Score", ascending=False).reset_index())
+        st.subheader("📊 Sector Summary")
+        st.dataframe(sector_summary, use_container_width=True, hide_index=True)
 
-                # Interactive ranked table + deep dive
-                col_left, col_right = st.columns([2, 3])
-                
-                with col_left:
-                    st.subheader("🏆 Top Ranked Stocks")
-                    display_df = scored_df.head(50)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
-                    selection = st.dataframe(
-                        display_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        on_select="rerun",
-                        selection_mode="single-row"
-                    )
-                    if selection["selection"]["rows"]:
-                        idx = selection["selection"]["rows"][0]
-                        st.session_state.selected_ticker_tab2 = display_df.iloc[idx]["Ticker"]
+        st.divider()
 
-                with col_right:
-                    ticker = st.session_state.get("selected_ticker_tab2")
-                    if ticker:
-                        show_stock_deep_dive(ticker)
-                    else:
-                        st.info("👈 Click any row on the left to open deep dive")
+        col_left, col_right = st.columns([2, 3])
 
-                # Export
-                csv = scored_df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Full Ranked List", csv,
-                                   f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv",
-                                   use_container_width=True)
+        with col_left:
+            st.subheader("🏆 Top Ranked Stocks")
+            display_df = scored_df.head(50)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+            selection = st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            if selection["selection"]["rows"]:
+                idx = selection["selection"]["rows"][0]
+                st.session_state.selected_ticker_tab2 = display_df.iloc[idx]["Ticker"]
 
-    # Historical Backtest (kept unchanged)
+        with col_right:
+            ticker = st.session_state.get("selected_ticker_tab2")
+            if ticker:
+                show_stock_deep_dive(ticker)
+            else:
+                st.info("👈 Click any row on the left to open professional deep dive")
+
+        # Export
+        csv = scored_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Full Ranked List", csv,
+                           f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv",
+                           use_container_width=True)
+    else:
+        st.info("Press the button above to generate ISM-ranked stock ideas")
+
+    # Historical Backtest (kept clean)
     st.subheader("📅 Historical Backtest (Test Past ISM Reports)")
     if report_metadata:
         historical_dates = sorted(report_metadata.keys(), reverse=True)
