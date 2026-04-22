@@ -1210,7 +1210,7 @@ with tab2:
 
             st.divider()
 
-section_header("Bottom Ranked — Short Candidates")
+        section_header("Bottom Ranked — Short Candidates")
             
             # === IMPROVED SHORT CANDIDATES (only real negative scores) ===
             short_candidates = scored_df[scored_df["ism_score"] < -0.08].head(40).copy()
