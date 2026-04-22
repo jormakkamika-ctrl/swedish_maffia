@@ -345,8 +345,8 @@ def load_all_us_tickers():
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_full_stock_universe():
     """Loads pre-built static universe — instant + zero rate limits."""
-    csv_url = "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/universe.csv"  # ← CHANGE THIS
-    
+    csv_url = "https://github.com/jormakkamika-ctrl/swedish_maffia/tree/main/universe.csv"  # ← CHANGE THIS
+
     try:
         df = pd.read_csv(csv_url)
         as_of = df['as_of_date'].iloc[0]
