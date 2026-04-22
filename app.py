@@ -942,7 +942,7 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
+    with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
         # Latest report comments (always shown first)
         if comments_list:
             st.markdown(f"**Latest Report — {latest_date.strftime('%B %Y')}**")
