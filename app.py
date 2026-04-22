@@ -308,7 +308,7 @@ def calculate_macd(df: pd.DataFrame, fast=12, slow=26, signal=9):
     histogram = macd - signal_line
     return macd, signal_line, histogram
     
-    def show_stock_deep_dive(ticker: str):
+def show_stock_deep_dive(ticker: str):
     """Reusable professional deep dive used in both Tab 1 and Tab 2."""
     if not ticker:
         return
