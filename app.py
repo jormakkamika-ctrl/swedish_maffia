@@ -487,12 +487,12 @@ def explain_score(row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> 
     
     for driver_name in DriverName:
         exposure = row.get(driver_name.value, 0.0)
-        if exposure > 0.25:  # only material exposures
+        if exposure > 0.25:
             strength = drivers[driver_name].strength
             contribution = exposure * strength
             if abs(contribution) > 0.15:
                 reasons.append(f"{strength:+.2f}×{exposure:.1f} {driver_name.value}")
-                if contribution > 0.35:  # high conviction driver
+                if contribution > 0.35:
                     dominant_drivers.append(driver_name.value)
     
     rationale = " | ".join(reasons[:4])
@@ -517,8 +517,8 @@ def get_best_exposure(yahoo_ind: str) -> Dict[DriverName, float]:
 def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, EconomicDriver]) -> pd.DataFrame:
     if stocks_df.empty:
         return stocks_df
-    
-    # Existing exposure matrix code stays exactly the same...
+
+    # Build exposure matrix
     exposure_matrix = []
     for _, row in stocks_df.iterrows():
         yahoo_ind = row.get("Yahoo Industry", "")
@@ -530,27 +530,26 @@ def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, Econ
                 exposures[d] = max(exposures.get(d, 0.0), weight)
         vector = [exposures.get(d, 0.0) for d in DriverName]
         exposure_matrix.append(vector)
-    
+
     exposure_df = pd.DataFrame(exposure_matrix, columns=[d.value for d in DriverName], index=stocks_df.index)
     stocks_df = pd.concat([stocks_df, exposure_df], axis=1)
-    
+
     driver_vector = np.array([drivers[d].strength for d in DriverName])
     raw_score = stocks_df[[d.value for d in DriverName]].dot(driver_vector)
-    
-    # === NEW: Regime confidence multiplier (fund-manager style) ===
-    # Stronger signal when New Orders + Backlog are both clearly positive
-    new_orders = drivers[DriverName.DEMAND_MOMENTUM].strength
+
+    # === FUND-MANAGER REGIME MULTIPLIER + CONVICTION ===
+    new_orders_strength = drivers[DriverName.DEMAND_MOMENTUM].strength
     pmi_regime = 1.0
-    if new_orders > 0.4:                    # very strong demand
+    if new_orders_strength > 0.4:      # very strong demand
         pmi_regime = 1.25
-    elif new_orders > 0.2:
-        pmi_regime = 1.1
-    
+    elif new_orders_strength > 0.2:
+        pmi_regime = 1.10
+
     stocks_df["ism_score"] = (raw_score * pmi_regime).round(3)
-    stocks_df["conviction"] = (stocks_df["ism_score"] * abs(new_orders)).round(3)  # extra conviction when demand is strong
-    
+    stocks_df["conviction"] = (stocks_df["ism_score"] * abs(new_orders_strength)).round(3)
+
     stocks_df["why"] = stocks_df.apply(lambda r: explain_score(r, drivers), axis=1)
-    
+
     return stocks_df.sort_values("ism_score", ascending=False)
 
 def calculate_macd(df: pd.DataFrame, fast=12, slow=26, signal=9):
