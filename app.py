@@ -504,7 +504,6 @@ def section_header(title: str, caption: str = ""):
 def show_stock_deep_dive(ticker: str):
     if not ticker:
         return
-
     with st.spinner(f"Loading {ticker}..."):
         t = yf.Ticker(ticker)
         info = t.info
@@ -685,6 +684,7 @@ def parse_report_text(text: str):
 
 @st.cache_data(ttl=86400)
 def build_historical_dataset():
+    """Fixed version - now returns 3 values to match the call site and prevent crash."""
     all_data = []
     report_metadata = {}
     archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
@@ -795,7 +795,6 @@ with tab1:
     regime = "Expansion" if pmi_val >= 50 else "Contraction"
     regime_class = "pmi-expansion" if pmi_val >= 50 else "pmi-contraction"
     regime_color = "#3fb950" if pmi_val >= 50 else "#f85149"
-    regime_symbol = "+" if pmi_val >= 50 else "-"
     st.markdown(f"""
     <div class="pmi-banner {regime_class}">
     <div style="font-size:2rem; font-weight:700; color:{regime_color}; font-family:'IBM Plex Mono',monospace; line-height:1;">
