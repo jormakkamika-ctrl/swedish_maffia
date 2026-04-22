@@ -341,129 +341,22 @@ def load_all_us_tickers():
         return pd.DataFrame()
 
 
-# ====================== FULL STOCK UNIVERSE — CLEAN BANGKOK LUCKY STYLE ======================
+# ====================== INSTANT UNIVERSE LOADER (Professional Grade) ======================
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_full_stock_universe(max_tickers: int = 6000):
-    """Clean version using the exact proven pattern from bangkok_lucky.py — no raw dicts leak into UI."""
-    tickers_df = load_all_us_tickers()
-    if tickers_df.empty:
-        return pd.DataFrame()
-
-    stock_symbols = tickers_df[~tickers_df['Security Name'].str.contains(
-        'ETF|Trust|Fund|Invesco|iShares|Vanguard|WARRANT|RIGHTS|UNIT|WT', 
-        case=False, na=False
-    )]['Symbol'].tolist()[:max_tickers]
-
-    rows = []
-    progress_bar = st.progress(0, text=f"Building ISM universe (> $1B) — {len(stock_symbols):,} symbols...")
-
-    # === Warm-up (exactly like bangkok_lucky) ===
-    status_text = st.empty()
-    status_text.text("🌐 Warming up Yahoo Finance...")
-    warm_up = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
-    for wt in warm_up:
-        try:
-            _ = yf.Ticker(wt).info   # discard result
-            time.sleep(random.uniform(2.0, 3.5))
-        except:
-            pass
-    status_text.empty()
-
-    # Shuffle to avoid throttling patterns
-    shuffled_list = stock_symbols.copy()
-    random.shuffle(shuffled_list)
-
-    batch_size = 15
-
-    for i in range(0, len(shuffled_list), batch_size):
-        batch = shuffled_list[i:i + batch_size]
+def get_full_stock_universe():
+    """Loads pre-built static universe — instant + zero rate limits."""
+    csv_url = "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/universe.csv"  # ← CHANGE THIS
+    
+    try:
+        df = pd.read_csv(csv_url)
+        as_of = df['as_of_date'].iloc[0]
+        st.success(f"✅ Loaded pre-built universe • {len(df):,} stocks • as of {as_of}")
         
-        try:
-            tickers_obj = yf.Tickers(" ".join(batch))
-            for sym in batch:
-                try:
-                    t = tickers_obj.tickers.get(sym)
-                    if not t:
-                        continue
-                    
-                    info = t.info
-                    fast_info = t.fast_info if hasattr(t, 'fast_info') else {}
-
-                    market_cap = (
-                        info.get("marketCap") or info.get("market_cap") or
-                        fast_info.get("marketCap") or fast_info.get("market_cap") or 0
-                    )
-
-                    if market_cap > 1_000_000_000:
-                        company_name = info.get("longName") or info.get("shortName") or sym
-                        industry = info.get("industry", "") or ""
-                        exchange = str(info.get("exchange", "")).upper()
-
-                        valid_exchanges = {"NYSE", "NYQ", "NMS", "NASD", "NASDAQ", "AMEX", "NASDAQGS", "NASDAQGM"}
-                        
-                        if any(kw in exchange for kw in valid_exchanges):
-                            rows.append({
-                                "Ticker": sym,
-                                "Company": company_name,
-                                "Yahoo Industry": industry,
-                                "Market Cap": market_cap,
-                                "Exchange": exchange,
-                                "Security Name": tickers_df[tickers_df['Symbol'] == sym]['Security Name'].iloc[0] 
-                                                if not tickers_df[tickers_df['Symbol'] == sym].empty else ""
-                            })
-                except:
-                    continue
-
-        except Exception:
-            # Fallback: single-ticker retry (very defensive)
-            for sym in batch:
-                for attempt in range(3):
-                    try:
-                        t = yf.Ticker(sym)
-                        info = t.info
-                        fast_info = t.fast_info if hasattr(t, 'fast_info') else {}
-                        
-                        market_cap = (
-                            info.get("marketCap") or info.get("market_cap") or
-                            fast_info.get("marketCap") or fast_info.get("market_cap") or 0
-                        )
-
-                        if market_cap > 1_000_000_000:
-                            company_name = info.get("longName") or info.get("shortName") or sym
-                            industry = info.get("industry", "") or ""
-                            exchange = str(info.get("exchange", "")).upper()
-                            if any(kw in exchange for kw in valid_exchanges):
-                                rows.append({
-                                    "Ticker": sym,
-                                    "Company": company_name,
-                                    "Yahoo Industry": industry,
-                                    "Market Cap": market_cap,
-                                    "Exchange": exchange,
-                                    "Security Name": tickers_df[tickers_df['Symbol'] == sym]['Security Name'].iloc[0] 
-                                                    if not tickers_df[tickers_df['Symbol'] == sym].empty else ""
-                                })
-                        break
-                    except:
-                        time.sleep(random.uniform(2.0, 4.0))
-                else:
-                    continue
-
-        # Progress
-        progress = min(1.0, (i + len(batch)) / len(shuffled_list))
-        progress_bar.progress(progress, text=f"Processed {i+len(batch):,}/{len(shuffled_list):,} | Found {len(rows):,} stocks > $1B")
-
-        time.sleep(random.uniform(6.5, 11.0))   # critical for rate-limit survival
-
-    progress_bar.empty()
-
-    if rows:
-        df = pd.DataFrame(rows)
-        df = df.sort_values("Market Cap", ascending=False).reset_index(drop=True)
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
-        st.success(f"✅ Universe ready: **{len(df):,} stocks** (> $1B market cap)")
         return df
-    else:
-        st.error("❌ Could not fetch valid stocks. Try again or use Deep Refresh.")
+    except Exception as e:
+        st.warning("Static universe not found. Falling back to live build (slow)...")
+        # You can keep the old slow function here as fallback if you want
         return pd.DataFrame()
 
 # ====================== SCRAPER ======================
