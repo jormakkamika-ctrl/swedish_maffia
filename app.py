@@ -684,7 +684,7 @@ def parse_report_text(text: str):
 
 @st.cache_data(ttl=86400)
 def build_historical_dataset():
-    """Fixed version - now returns 3 values to match the call site and prevent crash."""
+    """Fixed version - now returns exactly 3 values and fixes the len(nunique()) crash."""
     all_data = []
     report_metadata = {}
     archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
@@ -737,8 +737,13 @@ def build_historical_dataset():
     df = pd.DataFrame(all_data)
     if df.empty:
         return pd.DataFrame(columns=["date", "industry", "score", "pmi", "url"]), {}, log_messages
+
     df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)
-    log_messages.append(f"Total records: {len(df)} across {len(df['date'].nunique())} reports.")
+    
+    # FIXED: nunique() already returns an int → no len() around it
+    num_unique_dates = df['date'].nunique() if 'date' in df.columns and not df.empty else 0
+    log_messages.append(f"Total records: {len(df)} across {num_unique_dates} reports.")
+    
     return df, report_metadata, log_messages
 
 # ====================== APP HEADER ======================
