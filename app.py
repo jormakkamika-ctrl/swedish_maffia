@@ -58,7 +58,7 @@ PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
     ],
     "Textile Mills": ["Textile Manufacturing"],
     "Apparel, Leather & Allied Products": ["Apparel Manufacturing", "Footwear & Accessories"],
-    "Wood Products": ["Lumber & Wood Production"],
+    "Wood Products": ["Lumber & Wood Production", "Building Materials", "Building Products & Equipment"],
     "Paper Products": ["Paper & Forest Products", "Packaging & Containers"],
     "Printing & Related Support Activities": ["Packaging & Containers"],
     "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream", "Thermal Coal"],
@@ -67,14 +67,24 @@ PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
     "Nonmetallic Mineral Products": ["Building Materials", "Construction Materials"],
     "Primary Metals": [
         "Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining",
-        "Gold", "Other Precious Metals & Mining"          # ← Added gold
+        "Gold", "Other Precious Metals & Mining"          # already good
     ],
     "Fabricated Metal Products": ["Metal Fabrication", "Tools & Accessories"],
-    "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Pollution & Treatment Controls"],
-    "Computer & Electronic Products": ["Semiconductors", "Electronic Components", "Computer Hardware", "Communication Equipment"],
+    "Machinery": [
+        "Specialty Industrial Machinery", 
+        "Farm & Heavy Construction Machinery", 
+        "Pollution & Treatment Controls"
+    ],
+    "Computer & Electronic Products": [
+        "Semiconductors", 
+        "Electronic Components", 
+        "Computer Hardware", 
+        "Communication Equipment",
+        "Semiconductor Equipment & Materials"            # ← important addition
+    ],
     "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
     "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
-    "Furniture & Related Products": ["Home Furnishings & Fixtures"],
+    "Furniture & Related Products": ["Home Furnishings & Fixtures", "Furnishings, Fixtures & Appliances"],
     "Miscellaneous Manufacturing": ["Medical Instruments & Supplies", "Medical Devices", "Leisure", "Recreational Vehicles"]
 }
 
