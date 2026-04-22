@@ -943,7 +943,7 @@ with tab1:
                 """, unsafe_allow_html=True)
 
     with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
-    if comments_list:
+        if comments_list:
         st.markdown("**Latest Report — " + latest_date.strftime('%B %Y') + "**")
         st.markdown("\n\n".join(comments_list))
         st.divider()
