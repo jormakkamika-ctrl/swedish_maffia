@@ -381,24 +381,28 @@ def load_all_us_tickers():
         return pd.DataFrame()
 
 
-# ====================== INSTANT UNIVERSE LOADER (PRODUCTION READY) ======================
-@st.cache_data(ttl=86400 * 7, show_spinner=False)   # cache for 7 days
+# ====================== INSTANT UNIVERSE LOADER (DEBUG + ROBUST) ======================
+@st.cache_data(ttl=86400 * 7, show_spinner=False)
 def get_full_stock_universe():
-    """Loads pre-built static universe — loads in < 2 seconds, zero rate limits."""
+    """Instant loader with debug output so we can see exactly what's happening."""
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
     
     try:
         df = pd.read_csv(csv_url)
-        as_of = df['as_of_date'].iloc[0]
         
-        st.success(f"✅ Loaded static universe • **{len(df):,} stocks** • as of {as_of}")
+        # Debug info
+        st.success(f"✅ Loaded universe.csv → **{len(df):,} stocks**")
+        st.caption(f"Columns found: {list(df.columns)} | as_of_date = {df['as_of_date'].iloc[0]}")
         
-        # Format Market Cap for display
-        df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
+        # Make sure Market Cap is formatted for display
+        if "Market Cap" in df.columns:
+            df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B")
+        
         return df
+        
     except Exception as e:
-        st.error(f"Failed to load universe.csv: {e}")
-        st.info("Falling back to live build (slow) is disabled for now.")
+        st.error(f"❌ Failed to load universe: {str(e)}")
+        st.info("Raw URL used: " + csv_url)
         return pd.DataFrame()
 
 # ====================== SCRAPER ======================
