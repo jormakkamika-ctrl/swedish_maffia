@@ -537,16 +537,24 @@ def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, Econ
     driver_vector = np.array([drivers[d].strength for d in DriverName])
     raw_score = stocks_df[[d.value for d in DriverName]].dot(driver_vector)
 
-    # === FUND-MANAGER REGIME MULTIPLIER + CONVICTION ===
+        # === BEST CONVICTION SCORE (professional, stable, real-world) ===
     new_orders_strength = drivers[DriverName.DEMAND_MOMENTUM].strength
+    
+    # Regime multiplier (still uses New Orders as the primary gauge)
     pmi_regime = 1.0
-    if new_orders_strength > 0.4:      # very strong demand
+    if new_orders_strength > 0.4:
         pmi_regime = 1.25
     elif new_orders_strength > 0.2:
         pmi_regime = 1.10
 
     stocks_df["ism_score"] = (raw_score * pmi_regime).round(3)
-    stocks_df["conviction"] = (stocks_df["ism_score"] * abs(new_orders_strength)).round(3)
+
+    # Composite regime strength across all positive drivers
+    positive_drivers = [max(0.0, d.strength) for d in drivers.values()]
+    overall_regime_strength = np.mean(positive_drivers) if positive_drivers else 0.0
+    
+    # Conviction = ism_score boosted by overall regime strength (always readable)
+    stocks_df["conviction"] = (stocks_df["ism_score"] * (0.65 + 0.35 * overall_regime_strength)).round(3)
 
     stocks_df["why"] = stocks_df.apply(lambda r: explain_score(r, drivers), axis=1)
 
