@@ -684,7 +684,6 @@ def parse_report_text(text: str):
 
 @st.cache_data(ttl=86400)
 def build_historical_dataset():
-    """Fixed version - now returns exactly 3 values and fixes the len(nunique()) crash."""
     all_data = []
     report_metadata = {}
     archive_url = "https://www.prnewswire.com/news/institute-for-supply-management/"
@@ -737,13 +736,9 @@ def build_historical_dataset():
     df = pd.DataFrame(all_data)
     if df.empty:
         return pd.DataFrame(columns=["date", "industry", "score", "pmi", "url"]), {}, log_messages
-
     df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)
-    
-    # FIXED: nunique() already returns an int → no len() around it
     num_unique_dates = df['date'].nunique() if 'date' in df.columns and not df.empty else 0
     log_messages.append(f"Total records: {len(df)} across {num_unique_dates} reports.")
-    
     return df, report_metadata, log_messages
 
 # ====================== APP HEADER ======================
@@ -1006,13 +1001,26 @@ with tab2:
         color_continuous_midpoint=0,
     )
     fig_drivers.update_traces(textfont=dict(family="IBM Plex Mono", size=11), textposition="outside")
+
+    # FIXED: Avoid duplicate 'xaxis' key conflict with PLOTLY_THEME
     fig_drivers.update_layout(
         height=320,
-        xaxis=dict(range=[-1.1, 1.1], zeroline=True, zerolinecolor="#444c56", zerolinewidth=1),
         coloraxis_showscale=False,
         margin=dict(l=10, r=40, t=20, b=10),
-        **PLOTLY_THEME
+        **{k: v for k, v in PLOTLY_THEME.items() if k != "xaxis"}
     )
+    # Override xaxis separately (safe merge)
+    fig_drivers.update_layout(
+        xaxis=dict(
+            range=[-1.1, 1.1],
+            zeroline=True,
+            zerolinecolor="#444c56",
+            zerolinewidth=1,
+            gridcolor="#21262d",
+            linecolor="#30363d"
+        )
+    )
+
     st.plotly_chart(fig_drivers, use_container_width=True)
 
     st.divider()
