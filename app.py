@@ -8,6 +8,8 @@ import random
 import plotly.express as px
 import numpy as np
 import yfinance as yf
+import plotly.graph_objects as go
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List
@@ -287,6 +289,14 @@ def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, Econ
 
     return stocks_df.sort_values("ism_score", ascending=False)
 
+def calculate_macd(df: pd.DataFrame, fast=12, slow=26, signal=9):
+    """Simple MACD calculation for the chart."""
+    exp1 = df['Close'].ewm(span=fast, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=slow, adjust=False).mean()
+    macd = exp1 - exp2
+    signal_line = macd.ewm(span=signal, adjust=False).mean()
+    histogram = macd - signal_line
+    return macd, signal_line, histogram
 # ====================== UTILS ======================
 def normalize_name(name: str) -> str:
     name = name.lower().strip()
@@ -591,9 +601,9 @@ with tab1:
 
     st.divider()
 
-    # Primary Effect Stock Baskets
+        # ====================== PRIMARY EFFECT STOCK BASKETS — PHASE 1 ======================
     st.subheader("📦 Primary Effect Stock Baskets")
-    st.caption("**Direct NAICS-mapped companies** • Only selected industries are processed")
+    st.caption("**Direct NAICS-mapped companies** • Click any row to open professional deep dive")
 
     if st.button("🚀 Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
         stocks_df = get_full_stock_universe()
@@ -601,14 +611,14 @@ with tab1:
             if len(selected_rows["selection"]["rows"]) > 0:
                 selected_indices = selected_rows["selection"]["rows"]
                 selected_industries = ranked_df.iloc[selected_indices]["industry"].tolist()
-                st.success(f"✅ Filtering for {len(selected_industries)} selected industry(ies)")
             else:
                 selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
 
-            for industry in selected_industries:
-                direction = "GROWTH" if current_df.loc[current_df['industry'] == industry, 'score'].iloc[0] > 0 else "CONTRACTION"
-                color = "green" if direction == "GROWTH" else "red"
+            # Store baskets in session state so we can select across them
+            st.session_state.primary_baskets = {}
+            all_tickers_for_select = []
 
+            for industry in selected_industries:
                 yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
                 if not yahoo_industries:
                     continue
@@ -616,13 +626,107 @@ with tab1:
                 filtered = stocks_df[stocks_df["Yahoo Industry"].isin(yahoo_industries)].copy()
                 filtered = filtered.sort_values("Market Cap", ascending=False)
 
-                with st.expander(f"**{industry} — {direction}** ({len(filtered)} stocks)", expanded=True):
-                    st.markdown(f"<span style='color:{color}'>**Primary Effect via NAICS {NAICS_MAPPING.get(industry, '—')}**</span>", unsafe_allow_html=True)
-                    st.dataframe(
-                        filtered[["Ticker", "Company", "Yahoo Industry", "Market Cap"]],
+                direction = "GROWTH" if current_df.loc[current_df['industry'] == industry, 'score'].iloc[0] > 0 else "CONTRACTION"
+                color = "green" if direction == "GROWTH" else "red"
+
+                st.session_state.primary_baskets[industry] = {
+                    "df": filtered,
+                    "direction": direction,
+                    "color": color
+                }
+                all_tickers_for_select.extend(filtered["Ticker"].tolist())
+
+            st.success(f"✅ Generated baskets for {len(selected_industries)} industries")
+
+    # ====================== INTERACTIVE DEEP DIVE ======================
+    if "primary_baskets" in st.session_state and st.session_state.primary_baskets:
+        col_left, col_right = st.columns([2, 3])   # left = baskets, right = deep dive
+
+        with col_left:
+            st.subheader("📋 Available Baskets")
+            for industry, data in st.session_state.primary_baskets.items():
+                with st.expander(f"**{industry}** — {data['direction']}", expanded=True):
+                    df_display = data["df"][["Ticker", "Company", "Yahoo Industry", "Market Cap"]].copy()
+                    selection = st.dataframe(
+                        df_display,
                         use_container_width=True,
-                        hide_index=True
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row"
                     )
+                    if selection["selection"]["rows"]:
+                        selected_idx = selection["selection"]["rows"][0]
+                        selected_ticker = df_display.iloc[selected_idx]["Ticker"]
+                        st.session_state.selected_ticker = selected_ticker
+
+        with col_right:
+            st.subheader("🔍 Selected Stock Deep Dive")
+            ticker = st.session_state.get("selected_ticker")
+
+            if ticker:
+                with st.spinner(f"Fetching latest data for {ticker}..."):
+                    t = yf.Ticker(ticker)
+                    info = t.info
+                    hist = t.history(period="1y")
+
+                # === CHART ===
+                if not hist.empty:
+                    macd, signal, histo = calculate_macd(hist)
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], name="Close", line=dict(color="#1f77b4")))
+                    fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")))
+                    fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#2ca02c")))
+                    fig.add_trace(go.Bar(x=hist.index, y=histo, name="Histogram", marker_color="#d62728", opacity=0.6))
+                    fig.update_layout(
+                        title=f"{ticker} — 1 Year Price + MACD (12,26,9)",
+                        height=420,
+                        template="plotly_dark",
+                        xaxis_title="",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # === KEY METRICS TABLE ===
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or hist['Close'].iloc[-1]
+                mc = info.get("marketCap") or 0
+
+                eps0 = info.get("trailingEps")
+                eps1 = info.get("forwardEps")
+                eps2 = info.get("forwardEps")  # often same as FY1 for many stocks; we can improve later
+
+                pe0 = info.get("trailingPE") or (price / eps0 if eps0 else None)
+                pe1 = info.get("forwardPE") or (price / eps1 if eps1 else None)
+
+                eg1 = ((eps1 - eps0) / eps0 * 100) if eps0 and eps1 else None
+                eg2 = ((eps2 - eps1) / eps1 * 100) if eps1 and eps2 else None
+
+                peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 else None
+                peg2 = (pe1 / (eg2 / 100)) if pe1 and eg2 else None   # using FY1 PE for simplicity
+
+                metrics = {
+                    "Metric": ["Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1", "EPS FY2",
+                               "PE FY0", "PE FY1", "EG F1 %", "EG F2 %", "PEG FY1", "PEG FY2"],
+                    "Value": [
+                        f"${price:.2f}" if price else "N/A",
+                        f"${mc/1e9:.1f}B" if mc else "N/A",
+                        f"{eps0:.2f}" if eps0 else "N/A",
+                        f"{eps1:.2f}" if eps1 else "N/A",
+                        f"{eps2:.2f}" if eps2 else "N/A",
+                        f"{pe0:.1f}" if pe0 else "N/A",
+                        f"{pe1:.1f}" if pe1 else "N/A",
+                        f"{eg1:.1f}%" if eg1 else "N/A",
+                        f"{eg2:.1f}%" if eg2 else "N/A",
+                        f"{peg1:.2f}" if peg1 else "N/A",
+                        f"{peg2:.2f}" if peg2 else "N/A"
+                    ]
+                }
+
+                st.dataframe(pd.DataFrame(metrics), use_container_width=True, hide_index=True)
+
+                # Extra context
+                st.caption(f"**Why relevant to ISM?** {ticker} belongs to {info.get('industry', '—')}")
+            else:
+                st.info("👈 Click any row in the baskets on the left to see detailed analysis")
 
     # === Respondent Comments + 6-Month Momentum (fixed layout) ===
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
