@@ -483,13 +483,23 @@ MANUAL_EXPOSURE_OVERRIDES: Dict[str, Dict[DriverName, float]] = {
 # ====================== HELPER FUNCTIONS ======================
 def explain_score(row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> str:
     reasons = []
+    dominant_drivers = []
+    
     for driver_name in DriverName:
         exposure = row.get(driver_name.value, 0.0)
-        if exposure > 0.3:
+        if exposure > 0.25:  # only material exposures
             strength = drivers[driver_name].strength
-            if abs(strength) > 0.3:
-                reasons.append(f"{strength:+.1f}x{exposure:.1f} {driver_name.value}")
-    return " | ".join(reasons[:4]) or "Neutral exposure"
+            contribution = exposure * strength
+            if abs(contribution) > 0.15:
+                reasons.append(f"{strength:+.2f}×{exposure:.1f} {driver_name.value}")
+                if contribution > 0.35:  # high conviction driver
+                    dominant_drivers.append(driver_name.value)
+    
+    rationale = " | ".join(reasons[:4])
+    if dominant_drivers:
+        rationale = f"**{', '.join(dominant_drivers[:2])}** → " + rationale
+    
+    return rationale or "Low / neutral exposure"
 
 def get_best_exposure(yahoo_ind: str) -> Dict[DriverName, float]:
     if not yahoo_ind or not isinstance(yahoo_ind, str):
@@ -507,6 +517,8 @@ def get_best_exposure(yahoo_ind: str) -> Dict[DriverName, float]:
 def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, EconomicDriver]) -> pd.DataFrame:
     if stocks_df.empty:
         return stocks_df
+    
+    # Existing exposure matrix code stays exactly the same...
     exposure_matrix = []
     for _, row in stocks_df.iterrows():
         yahoo_ind = row.get("Yahoo Industry", "")
@@ -518,11 +530,27 @@ def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, Econ
                 exposures[d] = max(exposures.get(d, 0.0), weight)
         vector = [exposures.get(d, 0.0) for d in DriverName]
         exposure_matrix.append(vector)
+    
     exposure_df = pd.DataFrame(exposure_matrix, columns=[d.value for d in DriverName], index=stocks_df.index)
     stocks_df = pd.concat([stocks_df, exposure_df], axis=1)
+    
     driver_vector = np.array([drivers[d].strength for d in DriverName])
-    stocks_df["ism_score"] = stocks_df[[d.value for d in DriverName]].dot(driver_vector).round(3)
+    raw_score = stocks_df[[d.value for d in DriverName]].dot(driver_vector)
+    
+    # === NEW: Regime confidence multiplier (fund-manager style) ===
+    # Stronger signal when New Orders + Backlog are both clearly positive
+    new_orders = drivers[DriverName.DEMAND_MOMENTUM].strength
+    pmi_regime = 1.0
+    if new_orders > 0.4:                    # very strong demand
+        pmi_regime = 1.25
+    elif new_orders > 0.2:
+        pmi_regime = 1.1
+    
+    stocks_df["ism_score"] = (raw_score * pmi_regime).round(3)
+    stocks_df["conviction"] = (stocks_df["ism_score"] * abs(new_orders)).round(3)  # extra conviction when demand is strong
+    
     stocks_df["why"] = stocks_df.apply(lambda r: explain_score(r, drivers), axis=1)
+    
     return stocks_df.sort_values("ism_score", ascending=False)
 
 def calculate_macd(df: pd.DataFrame, fast=12, slow=26, signal=9):
@@ -1187,9 +1215,16 @@ with tab2:
 
         with col_left:
             section_header("Top Ranked — Long Ideas")
-            top_df = scored_df.head(50)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+            
+            # High-conviction filter (only stocks with real signal)
+            top_df = scored_df[scored_df["ism_score"] > 0.25].head(40).copy()
+            
+            if top_df.empty:
+                top_df = scored_df.head(30).copy()
+            
+            top_df = top_df[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "conviction", "why"]].copy()
             top_df["Link"] = top_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-
+            
             top_sel = st.dataframe(
                 top_df,
                 use_container_width=True,
@@ -1198,10 +1233,13 @@ with tab2:
                 selection_mode="single-row",
                 column_config={
                     "ism_score": st.column_config.ProgressColumn(
-                        "Signal", format="%.3f", min_value=-1.0, max_value=1.0,
-                        help="ISM driver alignment score"
+                        "ISM Score", format="%.3f", min_value=-1.0, max_value=1.0,
                     ),
-                    "why": st.column_config.TextColumn("Rationale", width="medium"),
+                    "conviction": st.column_config.ProgressColumn(
+                        "Conviction", format="%.3f", min_value=0.0, max_value=1.5,
+                        help="Score × Demand Momentum strength (higher = higher conviction)"
+                    ),
+                    "why": st.column_config.TextColumn("Rationale", width="large"),
                     "Link": st.column_config.LinkColumn("Yahoo", display_text="View"),
                 }
             )
