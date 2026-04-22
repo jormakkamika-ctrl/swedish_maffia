@@ -669,62 +669,87 @@ with tab1:
                     info = t.info
                     hist = t.history(period="1y")
 
-                # === CHART ===
+                                # ====================== IMPROVED CHART + METRICS ======================
                 if not hist.empty:
+                    # Calculate MACD
                     macd, signal, histo = calculate_macd(hist)
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], name="Close", line=dict(color="#1f77b4")))
-                    fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")))
-                    fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#2ca02c")))
-                    fig.add_trace(go.Bar(x=hist.index, y=histo, name="Histogram", marker_color="#d62728", opacity=0.6))
-                    fig.update_layout(
-                        title=f"{ticker} — 1 Year Price + MACD (12,26,9)",
-                        height=420,
-                        template="plotly_dark",
-                        xaxis_title="",
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02)
+
+                    # Create professional two-panel chart
+                    from plotly.subplots import make_subplots
+                    fig = make_subplots(
+                        rows=2, cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.08,
+                        row_heights=[0.65, 0.35],
+                        subplot_titles=(f"{ticker} — 1 Year Price", "MACD (12, 26, 9)")
                     )
+
+                    # Price panel (top)
+                    fig.add_trace(go.Scatter(
+                        x=hist.index, y=hist['Close'],
+                        name="Close Price", line=dict(color="#1f77b4", width=2)
+                    ), row=1, col=1)
+
+                    # MACD panel (bottom)
+                    fig.add_trace(go.Scatter(
+                        x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")
+                    ), row=2, col=1)
+                    fig.add_trace(go.Scatter(
+                        x=hist.index, y=signal, name="Signal", line=dict(color="#2ca02c")
+                    ), row=2, col=1)
+                    fig.add_trace(go.Bar(
+                        x=hist.index, y=histo, name="Histogram",
+                        marker_color=np.where(histo >= 0, "#26a26a", "#ef5350")
+                    ), row=2, col=1)
+
+                    fig.update_layout(
+                        height=520,
+                        template="plotly_dark",   # matches your app
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                        margin=dict(l=40, r=40, t=40, b=40)
+                    )
+                    fig.update_yaxes(title="Price ($)", row=1, col=1)
+                    fig.update_yaxes(title="MACD", row=2, col=1)
                     st.plotly_chart(fig, use_container_width=True)
 
-                # === KEY METRICS TABLE ===
-                price = info.get("currentPrice") or info.get("regularMarketPrice") or hist['Close'].iloc[-1]
+                # ====================== KEY METRICS TABLE ======================
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or hist['Close'].iloc[-1] if not hist.empty else None
                 mc = info.get("marketCap") or 0
 
                 eps0 = info.get("trailingEps")
                 eps1 = info.get("forwardEps")
-                eps2 = info.get("forwardEps")  # often same as FY1 for many stocks; we can improve later
 
-                pe0 = info.get("trailingPE") or (price / eps0 if eps0 else None)
-                pe1 = info.get("forwardPE") or (price / eps1 if eps1 else None)
+                pe0 = info.get("trailingPE") or (price / eps0 if eps0 and price else None)
+                pe1 = info.get("forwardPE") or (price / eps1 if eps1 and price else None)
 
                 eg1 = ((eps1 - eps0) / eps0 * 100) if eps0 and eps1 else None
-                eg2 = ((eps2 - eps1) / eps1 * 100) if eps1 and eps2 else None
 
-                peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 else None
-                peg2 = (pe1 / (eg2 / 100)) if pe1 and eg2 else None   # using FY1 PE for simplicity
+                peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 and eg1 != 0 else None
 
-                metrics = {
-                    "Metric": ["Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1", "EPS FY2",
-                               "PE FY0", "PE FY1", "EG F1 %", "EG F2 %", "PEG FY1", "PEG FY2"],
+                metrics_data = {
+                    "Metric": [
+                        "Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1 (Est.)",
+                        "PE FY0", "PE FY1", "EG F1 %", "PEG FY1"
+                    ],
                     "Value": [
                         f"${price:.2f}" if price else "N/A",
                         f"${mc/1e9:.1f}B" if mc else "N/A",
                         f"{eps0:.2f}" if eps0 else "N/A",
                         f"{eps1:.2f}" if eps1 else "N/A",
-                        f"{eps2:.2f}" if eps2 else "N/A",
                         f"{pe0:.1f}" if pe0 else "N/A",
                         f"{pe1:.1f}" if pe1 else "N/A",
-                        f"{eg1:.1f}%" if eg1 else "N/A",
-                        f"{eg2:.1f}%" if eg2 else "N/A",
-                        f"{peg1:.2f}" if peg1 else "N/A",
-                        f"{peg2:.2f}" if peg2 else "N/A"
+                        f"{eg1:.1f}%" if eg1 is not None else "N/A",
+                        f"{peg1:.2f}" if peg1 else "N/A"
                     ]
                 }
 
-                st.dataframe(pd.DataFrame(metrics), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    pd.DataFrame(metrics_data),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-                # Extra context
-                st.caption(f"**Why relevant to ISM?** {ticker} belongs to {info.get('industry', '—')}")
+                st.caption(f"**ISM Relevance:** {ticker} is in **{info.get('industry', '—')}**")
             else:
                 st.info("👈 Click any row in the baskets on the left to see detailed analysis")
 
