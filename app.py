@@ -340,28 +340,53 @@ def load_all_us_tickers():
         return pd.DataFrame()
 
 
-# ====================== FULL STOCK UNIVERSE (Hybrid — Best of Both Apps) ======================
+# ====================== FULL STOCK UNIVERSE — BANGKOK LUCKY STYLE (ROBUST) ======================
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_full_stock_universe(max_tickers: int = 6000, batch_size: int = 50):
-    """Ultra-robust stock loader — survives Yahoo rate limits + bad tickers."""
+def get_full_stock_universe(max_tickers: int = 6000):
+    """Ultra-reliable version using the exact enrichment pattern that works in bangkok_lucky.py"""
     tickers_df = load_all_us_tickers()
     if tickers_df.empty:
         return pd.DataFrame()
 
+    # Filter to real stocks only (same logic as before)
     stock_symbols = tickers_df[~tickers_df['Security Name'].str.contains(
-        'ETF|Trust|Fund|Invesco|iShares|Vanguard|WARRANT|RIGHTS|UNIT|WT', case=False, na=False
+        'ETF|Trust|Fund|Invesco|iShares|Vanguard|WARRANT|RIGHTS|UNIT|WT', 
+        case=False, na=False
     )]['Symbol'].tolist()[:max_tickers]
 
     rows = []
-    progress_bar = st.progress(0, text=f"Building ISM universe (> $1B) — scanning {len(stock_symbols):,} symbols...")
+    progress_bar = st.progress(0, text=f"Building ISM universe (> $1B) — {len(stock_symbols):,} symbols...")
 
-    for i in range(0, len(stock_symbols), batch_size):
-        batch = stock_symbols[i:i + batch_size]
+    # === Warm-up (exactly like bangkok_lucky) ===
+    status_text = st.empty()
+    status_text.text("🌐 Warming up Yahoo Finance...")
+    warm_up_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"]
+    for wt in warm_up_tickers:
+        try:
+            yf.Ticker(wt).info
+            time.sleep(random.uniform(2.5, 4.0))
+        except:
+            pass
+    status_text.empty()
+
+    # Shuffle to avoid pattern detection
+    import random
+    shuffled_list = stock_symbols.copy()
+    random.shuffle(shuffled_list)
+
+    batch_size = 15   # same proven size as your working enrichment
+
+    for i in range(0, len(shuffled_list), batch_size):
+        batch = shuffled_list[i:i + batch_size]
         
-        for sym in batch:
-            for attempt in range(3):  # retry up to 3 times per ticker
+        try:
+            tickers_obj = yf.Tickers(" ".join(batch))
+            
+            for sym in batch:
                 try:
-                    t = yf.Ticker(sym)
+                    t = tickers_obj.tickers.get(sym)
+                    if not t:
+                        continue
                     info = t.info or {}
                     fast_info = getattr(t, 'fast_info', {}) or {}
 
@@ -384,20 +409,45 @@ def get_full_stock_universe(max_tickers: int = 6000, batch_size: int = 50):
                                 "Yahoo Industry": industry,
                                 "Market Cap": market_cap,
                                 "Exchange": exchange,
-                                "Security Name": tickers_df[tickers_df['Symbol'] == sym]['Security Name'].iloc[0] if sym in tickers_df['Symbol'].values else ""
+                                "Security Name": tickers_df[tickers_df['Symbol'] == sym]['Security Name'].iloc[0] 
+                                                if sym in tickers_df['Symbol'].values else ""
                             })
-                        break  # success → move to next ticker
+                except:
+                    continue
 
-                except Exception:
-                    if attempt == 2:
-                        break  # give up after 3 tries
-                    time.sleep(1.5 ** attempt)  # backoff
+        except Exception:
+            # Fallback: single ticker retry (exactly like bangkok_lucky)
+            for sym in batch:
+                for attempt in range(3):
+                    try:
+                        t = yf.Ticker(sym)
+                        info = t.info or {}
+                        fast_info = getattr(t, 'fast_info', {}) or {}
+                        market_cap = info.get("marketCap") or info.get("market_cap") or fast_info.get("marketCap") or fast_info.get("market_cap") or 0
+                        
+                        if market_cap > 1_000_000_000:
+                            # same logic as above...
+                            company_name = info.get("longName") or info.get("shortName") or sym
+                            industry = info.get("industry", "") or ""
+                            exchange = str(info.get("exchange", "")).upper()
+                            if any(kw in exchange for kw in valid_exchanges):
+                                rows.append({
+                                    "Ticker": sym, "Company": company_name, "Yahoo Industry": industry,
+                                    "Market Cap": market_cap, "Exchange": exchange,
+                                    "Security Name": tickers_df[tickers_df['Symbol'] == sym]['Security Name'].iloc[0] 
+                                                    if sym in tickers_df['Symbol'].values else ""
+                                })
+                        break
+                    except:
+                        time.sleep(random.uniform(2.0, 4.5))
+                else:
+                    continue
 
-        # Live progress + real "Found" count
-        progress = min(1.0, (i + len(batch)) / len(stock_symbols))
-        progress_bar.progress(progress, text=f"Processed {i+len(batch):,}/{len(stock_symbols):,} | Found {len(rows):,} valid stocks > $1B")
+        # Progress
+        progress = min(1.0, (i + len(batch)) / len(shuffled_list))
+        progress_bar.progress(progress, text=f"Processed {i+len(batch):,}/{len(shuffled_list):,} | Found {len(rows):,} stocks > $1B")
 
-        time.sleep(2.0 + np.random.uniform(0.5, 1.5))  # aggressive but safe rate limit avoidance
+        time.sleep(random.uniform(6.0, 11.0))   # ← this is the magic that makes it work
 
     progress_bar.empty()
 
@@ -408,7 +458,7 @@ def get_full_stock_universe(max_tickers: int = 6000, batch_size: int = 50):
         st.success(f"✅ Universe ready: **{len(df):,} stocks** (> $1B market cap)")
         return df
     else:
-        st.error("❌ Could not fetch any valid stocks — try Deep Refresh or check connection.")
+        st.error("❌ Could not fetch any valid stocks — try Deep Refresh later.")
         return pd.DataFrame()
 
 # ====================== SCRAPER ======================
