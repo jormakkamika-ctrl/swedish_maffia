@@ -307,6 +307,86 @@ def calculate_macd(df: pd.DataFrame, fast=12, slow=26, signal=9):
     signal_line = macd.ewm(span=signal, adjust=False).mean()
     histogram = macd - signal_line
     return macd, signal_line, histogram
+    
+    def show_stock_deep_dive(ticker: str):
+    """Reusable professional deep dive used in both Tab 1 and Tab 2."""
+    if not ticker:
+        return
+    
+    with st.spinner(f"Fetching latest data for {ticker}..."):
+        t = yf.Ticker(ticker)
+        info = t.info
+        hist = t.history(period="1y")
+
+    st.subheader(f"🔍 {ticker} — Professional Deep Dive")
+
+    # Two-panel MACD chart
+    if not hist.empty:
+        macd, signal, histo = calculate_macd(hist)
+        from plotly.subplots import make_subplots
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                            row_heights=[0.68, 0.32],
+                            subplot_titles=(f"{ticker} — 1 Year Price", "MACD (12, 26, 9)"))
+        
+        fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], name="Close Price", line=dict(color="#1f77b4", width=2)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")), row=2, col=1)
+        fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#2ca02c")), row=2, col=1)
+        fig.add_trace(go.Bar(x=hist.index, y=histo, name="Histogram", marker_color=np.where(histo >= 0, "#26a26a", "#ef5350")), row=2, col=1)
+        
+        fig.update_layout(height=520, template="plotly_dark", legend=dict(orientation="h", yanchor="bottom", y=1.02))
+        fig.update_yaxes(title="Price ($)", row=1, col=1)
+        fig.update_yaxes(title="MACD", row=2, col=1)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Metrics (Phase 2 split layout)
+    price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
+    mc = info.get("marketCap") or 0
+    eps0 = info.get("trailingEps")
+    eps1 = info.get("forwardEps")
+    try:
+        calendar = t.calendar
+        eps2 = calendar['Forward EPS'].iloc[0] if not calendar.empty and 'Forward EPS' in calendar.columns else None
+    except:
+        eps2 = None
+
+    pe0 = info.get("trailingPE") or (price / eps0 if eps0 and price else None)
+    pe1 = info.get("forwardPE") or (price / eps1 if eps1 and price else None)
+    eg1 = ((eps1 - eps0) / eps0 * 100) if eps0 and eps1 else None
+    eg2 = ((eps2 - eps1) / eps1 * 100) if eps1 and eps2 else None
+    peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 and eg1 != 0 else None
+    peg2 = (pe1 / (eg2 / 100)) if pe1 and eg2 and eg2 != 0 else None
+
+    rev_growth = info.get("revenueGrowth")
+    rev_growth_pct = f"{rev_growth*100:.1f}%" if rev_growth is not None else "N/A"
+
+    try:
+        financials = t.financials
+        revenue = financials.loc['Total Revenue'].iloc[0] if not financials.empty and 'Total Revenue' in financials.index else None
+        rnd = financials.loc['Research And Development'].iloc[0] if not financials.empty and 'Research And Development' in financials.index else None
+        rnd_pct_str = f"{(rnd / revenue * 100):.1f}%" if revenue and rnd else "N/A"
+    except:
+        rnd_pct_str = "N/A"
+
+    col1, col2 = st.columns(2)
+    with col1:
+        left = pd.DataFrame({
+            "Metric": ["Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1", "EPS FY2", "PE FY0", "PE FY1"],
+            "Value": [f"${price:.2f}" if price else "N/A", f"${mc/1e9:.1f}B" if mc else "N/A",
+                      f"{eps0:.2f}" if eps0 else "N/A", f"{eps1:.2f}" if eps1 else "N/A",
+                      f"{eps2:.2f}" if eps2 else "N/A", f"{pe0:.1f}" if pe0 else "N/A", f"{pe1:.1f}" if pe1 else "N/A"]
+        })
+        st.dataframe(left, use_container_width=True, hide_index=True)
+
+    with col2:
+        right = pd.DataFrame({
+            "Metric": ["EG F1 %", "EG F2 %", "PEG FY1", "PEG FY2", "Revenue Growth (YoY)", "R&D % of Revenue"],
+            "Value": [f"{eg1:.1f}%" if eg1 is not None else "N/A", f"{eg2:.1f}%" if eg2 is not None else "N/A",
+                      f"{peg1:.2f}" if peg1 else "N/A", f"{peg2:.2f}" if peg2 else "N/A",
+                      rev_growth_pct, rnd_pct_str]
+        })
+        st.dataframe(right, use_container_width=True, hide_index=True)
+
+    st.caption(f"**ISM Relevance:** {ticker} belongs to **{info.get('industry', '—')}**")
 # ====================== UTILS ======================
 def normalize_name(name: str) -> str:
     name = name.lower().strip()
@@ -816,11 +896,10 @@ with tab1:
                            line_shape='spline', title="Relative Growth/Contraction Trends")
         st.plotly_chart(fig_line, use_container_width=True, key="evolution_chart")   # ← unique key
 
-# ====================== TAB 2: FUND MANAGER MACRO SCORING (PHASE 1) ======================
+# ====================== TAB 2: FUND MANAGER MACRO SCORING (PHASE 2 - INTERACTIVE) ======================
 with tab2:
     st.subheader("🔬 Economic Driver Signals (Professional Macro Translation)")
     
-    # Visual Driver Dashboard (much more professional than metric cards)
     drivers = calculate_drivers(subcomponents)
     driver_df = pd.DataFrame({
         "Driver": [d.value for d in drivers.keys()],
@@ -828,70 +907,67 @@ with tab2:
         "Description": [d.description for d in drivers.values()]
     })
     
-    fig_drivers = px.bar(
-        driver_df, x="Strength", y="Driver", orientation="h",
-        text="Strength", color="Strength",
-        color_continuous_scale="RdYlGn", color_continuous_midpoint=0,
-        title="Current ISM Regime Strength",
-        labels={"Strength": "Normalized Strength (-1.0 to +1.0)"}
-    )
+    fig_drivers = px.bar(driver_df, x="Strength", y="Driver", orientation="h",
+                         text="Strength", color="Strength",
+                         color_continuous_scale="RdYlGn", color_continuous_midpoint=0,
+                         title="Current ISM Regime Strength")
     fig_drivers.update_layout(height=340, template="plotly_dark", xaxis_title="")
     st.plotly_chart(fig_drivers, use_container_width=True)
 
     st.divider()
 
-    # ====================== ISM-LEVERAGED STOCK IDEAS ======================
     st.subheader("🔥 ISM-Leveraged Stock Ideas")
-    st.caption("Full NYSE + NASDAQ • > $1B market cap • Scored by economic exposure")
+    st.caption("Full NYSE + NASDAQ • > $1B • Click any row for deep dive")
 
     if st.button("🚀 Generate Ranked Ideas (Full Universe)", type="primary", use_container_width=True):
         with st.spinner("Scoring full universe..."):
             stocks_df = get_full_stock_universe()
             if not stocks_df.empty:
                 scored_df = tag_and_score_stocks(stocks_df, drivers)
-                
+                st.session_state.scored_df = scored_df   # store for selection
+
                 st.success(f"✅ Scored {len(scored_df):,} stocks")
 
                 # Sector Summary
                 sector_summary = (scored_df.groupby("Yahoo Industry")
-                                  .agg(Avg_Score=("ism_score", "mean"),
-                                       Num_Stocks=("Ticker", "count"))
-                                  .round(3)
-                                  .sort_values("Avg_Score", ascending=False)
-                                  .reset_index())
+                                  .agg(Avg_Score=("ism_score", "mean"), Num_Stocks=("Ticker", "count"))
+                                  .round(3).sort_values("Avg_Score", ascending=False).reset_index())
                 st.subheader("📊 Sector Summary")
                 st.dataframe(sector_summary, use_container_width=True, hide_index=True)
 
                 st.divider()
 
-                # Top ranked stocks with driver contribution breakdown
-                display_cols = ["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]
-                top_df = scored_df.head(30)[display_cols].copy()
+                # Interactive ranked table + deep dive
+                col_left, col_right = st.columns([2, 3])
+                
+                with col_left:
+                    st.subheader("🏆 Top Ranked Stocks")
+                    display_df = scored_df.head(50)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+                    selection = st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row"
+                    )
+                    if selection["selection"]["rows"]:
+                        idx = selection["selection"]["rows"][0]
+                        st.session_state.selected_ticker_tab2 = display_df.iloc[idx]["Ticker"]
 
-                st.subheader("🏆 Top 30 ISM-Leveraged Ideas")
-                st.dataframe(
-                    top_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Market Cap": st.column_config.TextColumn("Market Cap"),
-                        "Company": st.column_config.TextColumn("Company", width="medium"),
-                        "why": st.column_config.TextColumn("Why this stock?", width="large"),
-                        "ism_score": st.column_config.NumberColumn("ISM Score", format="%.2f"),
-                    }
-                )
+                with col_right:
+                    ticker = st.session_state.get("selected_ticker_tab2")
+                    if ticker:
+                        show_stock_deep_dive(ticker)
+                    else:
+                        st.info("👈 Click any row on the left to open deep dive")
 
-                # Export button
+                # Export
                 csv = scored_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Full Ranked List (CSV)",
-                    data=csv,
-                    file_name=f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+                st.download_button("📥 Download Full Ranked List", csv,
+                                   f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv",
+                                   use_container_width=True)
 
-    # ====================== HISTORICAL BACKTEST (unchanged but kept functional) ======================
+    # Historical Backtest (kept unchanged)
     st.subheader("📅 Historical Backtest (Test Past ISM Reports)")
     if report_metadata:
         historical_dates = sorted(report_metadata.keys(), reverse=True)
