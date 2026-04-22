@@ -942,25 +942,28 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-    with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
+        with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
+        # Latest report comments (always shown first)
         if comments_list:
-        st.markdown("**Latest Report — " + latest_date.strftime('%B %Y') + "**")
-        st.markdown("\n\n".join(comments_list))
-        st.divider()
-    
-    # === New: Historical comments ===
-    st.subheader("Previous Months' Respondent Comments")
-    historical_dates = sorted(report_metadata.keys(), reverse=True)[:6]  # last 6 months
-    
-    for d in historical_dates[1:]:  # skip the latest (already shown)
-        meta = report_metadata[d]
-        comments = meta.get("comments", [])
-        month_title = d.strftime('%B %Y')
-        with st.expander(f"{month_title} Comments ({len(comments)} quotes)"):
-            if comments:
-                st.markdown("\n\n".join(comments))
-            else:
-                st.info("No respondent comments available for this month.")
+            st.markdown(f"**Latest Report — {latest_date.strftime('%B %Y')}**")
+            st.markdown("\n\n".join(comments_list))
+            st.divider()
+        else:
+            st.info("No respondent comments parsed for this report.")
+
+        # Historical comments (previous 6 months)
+        st.subheader("Previous Months' Respondent Comments")
+        historical_dates = sorted(report_metadata.keys(), reverse=True)[:6]
+
+        for d in historical_dates[1:]:   # skip the latest month (already shown above)
+            meta = report_metadata[d]
+            old_comments = meta.get("comments", [])
+            month_title = d.strftime('%B %Y')
+            with st.expander(f"📅 {month_title} Comments ({len(old_comments)} quotes)"):
+                if old_comments:
+                    st.markdown("\n\n".join(old_comments))
+                else:
+                    st.info("No respondent comments available for this month.")
 
     section_header("6-Month Sector Momentum", "Rolling ISM growth/contraction score by industry")
 
