@@ -48,7 +48,7 @@ NAICS_MAPPING = {
     "Miscellaneous Manufacturing": "339",
 }
 
-# ====================== PRIMARY ISM → YAHOO INDUSTRY MAPPING ======================
+# ====================== PRIMARY ISM → YAHOO INDUSTRY MAPPING (Updated) ======================
 PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
     "Food, Beverage & Tobacco Products": [
         "Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers",
@@ -58,12 +58,15 @@ PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
     "Apparel, Leather & Allied Products": ["Apparel Manufacturing", "Footwear & Accessories"],
     "Wood Products": ["Lumber & Wood Production"],
     "Paper Products": ["Paper & Forest Products", "Packaging & Containers"],
-    "Printing & Related Support Activities": ["Packaging & Containers"],           # removed overly broad "Specialty Business Services"
+    "Printing & Related Support Activities": ["Packaging & Containers"],
     "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream", "Thermal Coal"],
     "Chemical Products": ["Chemicals", "Specialty Chemicals", "Agricultural Inputs"],
     "Plastics & Rubber Products": ["Rubber & Plastics", "Packaging & Containers"],
     "Nonmetallic Mineral Products": ["Building Materials", "Construction Materials"],
-    "Primary Metals": ["Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining"],
+    "Primary Metals": [
+        "Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining",
+        "Gold", "Other Precious Metals & Mining"          # ← Added gold
+    ],
     "Fabricated Metal Products": ["Metal Fabrication", "Tools & Accessories"],
     "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Pollution & Treatment Controls"],
     "Computer & Electronic Products": ["Semiconductors", "Electronic Components", "Computer Hardware", "Communication Equipment"],
@@ -611,7 +614,7 @@ with tab1:
                     continue
 
                 filtered = stocks_df[stocks_df["Yahoo Industry"].isin(yahoo_industries)].copy()
-                filtered = filtered.sort_values("Market Cap", ascending=False).head(30)
+                filtered = filtered.sort_values("Market Cap", ascending=False)
 
                 with st.expander(f"**{industry} — {direction}** ({len(filtered)} stocks)", expanded=True):
                     st.markdown(f"<span style='color:{color}'>**Primary Effect via NAICS {NAICS_MAPPING.get(industry, '—')}**</span>", unsafe_allow_html=True)
