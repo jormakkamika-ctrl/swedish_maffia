@@ -295,23 +295,37 @@ def normalize_name(name: str) -> str:
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 
 def get_respondent_comments(text: str) -> list[str]:
-    section_match = re.search(
-        r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management®|©|ISM® Reports|Report Issued|$))",
-        text, re.DOTALL | re.IGNORECASE
-    )
-    if not section_match:
+    """More robust parser for respondent comments section."""
+    # Try multiple possible section headers
+    patterns = [
+        r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management|©|ISM® Reports|Report Issued|$))",
+        r"RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management))",
+        r"COMMENTS FROM RESPONDENTS\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|$))",
+    ]
+    
+    section = ""
+    for pattern in patterns:
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            section = match.group(1).strip()
+            break
+    
+    if not section:
         return []
-    section = section_match.group(1).strip()
-    bullet_pattern = r'(?:\*|\-)\s*["“](.+?)["”]\s*(?:\[\s*(.+?)\s*\])?'
-    bullets = re.findall(bullet_pattern, section, re.DOTALL)
+
+    # More flexible bullet detection
+    bullet_pattern = r'(?:^|\n)[\s•\-\*]+["“](.+?)["”]\s*(?:\[\s*(.+?)\s*\])?'
+    bullets = re.findall(bullet_pattern, section, re.MULTILINE | re.DOTALL)
+    
     comments = []
     for quote, industry in bullets:
         quote = quote.strip()
-        if quote and len(quote) > 15:
+        if len(quote) > 15:
             comment = f"• {quote}"
-            if industry:
+            if industry and industry.strip():
                 comment += f" [{industry.strip()}]"
             comments.append(comment)
+    
     return comments
 
 # ====================== SUB-INDEX PARSER ======================
@@ -601,14 +615,15 @@ with tab1:
                         hide_index=True
                     )
 
-    # === Respondent Comments, 6-Month Momentum, Industry Score Evolution ===
+    # === Respondent Comments + 6-Month Momentum (fixed layout) ===
     with st.expander("📢 WHAT RESPONDENTS ARE SAYING", expanded=False):
         if comments_list:
             st.markdown("\n\n".join(comments_list))
         else:
             st.info("No respondent comments available for this report.")
 
-        st.subheader("📊 6-Month Sector Momentum")
+    # ←←← Moved OUTSIDE the expander
+    st.subheader("📊 6-Month Sector Momentum")
     
     # Fixed: safely handle any duplicate (industry, date) rows
     pivot = df_master.pivot_table(
