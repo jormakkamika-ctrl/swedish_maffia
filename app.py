@@ -669,7 +669,7 @@ with tab1:
                     info = t.info
                     hist = t.history(period="1y")
 
-                                                # ====================== PROFESSIONAL TWO-PANEL MACD CHART ======================
+                                # ====================== PHASE 2 — PROFESSIONAL DEEP DIVE ======================
                 if not hist.empty:
                     macd, signal, histo = calculate_macd(hist)
 
@@ -682,67 +682,96 @@ with tab1:
                         subplot_titles=(f"{ticker} — 1 Year Price", "MACD (12, 26, 9)")
                     )
 
-                    # Top panel: Price
-                    fig.add_trace(go.Scatter(
-                        x=hist.index, y=hist['Close'],
-                        name="Close Price", line=dict(color="#1f77b4", width=2)
-                    ), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], name="Close Price", line=dict(color="#1f77b4", width=2)), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")), row=2, col=1)
+                    fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#2ca02c")), row=2, col=1)
+                    fig.add_trace(go.Bar(x=hist.index, y=histo, name="Histogram", marker_color=np.where(histo >= 0, "#26a26a", "#ef5350")), row=2, col=1)
 
-                    # Bottom panel: MACD
-                    fig.add_trace(go.Scatter(
-                        x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")
-                    ), row=2, col=1)
-                    fig.add_trace(go.Scatter(
-                        x=hist.index, y=signal, name="Signal", line=dict(color="#2ca02c")
-                    ), row=2, col=1)
-                    fig.add_trace(go.Bar(
-                        x=hist.index, y=histo, name="Histogram",
-                        marker_color=np.where(histo >= 0, "#26a26a", "#ef5350")
-                    ), row=2, col=1)
-
-                    fig.update_layout(
-                        height=560,
-                        template="plotly_dark",
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                        margin=dict(l=40, r=40, t=50, b=40)
-                    )
+                    fig.update_layout(height=560, template="plotly_dark", legend=dict(orientation="h", yanchor="bottom", y=1.02))
                     fig.update_yaxes(title="Price ($)", row=1, col=1)
                     fig.update_yaxes(title="MACD", row=2, col=1)
-
                     st.plotly_chart(fig, use_container_width=True)
 
-                # ====================== METRICS TABLE ======================
+                # ====================== PHASE 2 METRICS ======================
                 price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
                 mc = info.get("marketCap") or 0
 
+                # Core EPS & PE
                 eps0 = info.get("trailingEps")
                 eps1 = info.get("forwardEps")
+
+                # Try to get EPS FY2 from calendar / analyst estimates
+                try:
+                    calendar = t.calendar
+                    if not calendar.empty and 'Forward EPS' in calendar.columns:
+                        eps2 = calendar['Forward EPS'].iloc[0] if len(calendar) > 1 else None
+                    else:
+                        eps2 = None
+                except:
+                    eps2 = None
 
                 pe0 = info.get("trailingPE") or (price / eps0 if eps0 and price else None)
                 pe1 = info.get("forwardPE") or (price / eps1 if eps1 and price else None)
 
                 eg1 = ((eps1 - eps0) / eps0 * 100) if eps0 and eps1 else None
+                eg2 = ((eps2 - eps1) / eps1 * 100) if eps1 and eps2 else None
 
                 peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 and eg1 != 0 else None
+                peg2 = (pe1 / (eg2 / 100)) if pe1 and eg2 and eg2 != 0 else None
+
+                # Revenue Growth (YoY)
+                rev_growth = info.get("revenueGrowth")
+                if rev_growth is not None:
+                    rev_growth_pct = f"{rev_growth*100:.1f}%"
+                else:
+                    rev_growth_pct = "N/A"
+
+                # R&D % of Revenue
+                try:
+                    financials = t.financials
+                    if not financials.empty:
+                        revenue = financials.loc['Total Revenue'].iloc[0] if 'Total Revenue' in financials.index else None
+                        rnd = financials.loc['Research And Development'].iloc[0] if 'Research And Development' in financials.index else None
+                        rnd_pct = (rnd / revenue * 100) if revenue and rnd else None
+                        rnd_pct_str = f"{rnd_pct:.1f}%" if rnd_pct is not None else "N/A"
+                    else:
+                        rnd_pct_str = "N/A"
+                except:
+                    rnd_pct_str = "N/A"
 
                 metrics_data = {
-                    "Metric": ["Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1 (Est.)",
-                               "PE FY0", "PE FY1", "EG F1 %", "PEG FY1"],
+                    "Metric": [
+                        "Current Price", "Market Cap",
+                        "EPS FY0 (TTM)", "EPS FY1 (Est.)", "EPS FY2 (Est.)",
+                        "PE FY0", "PE FY1",
+                        "EG F1 %", "EG F2 %",
+                        "PEG FY1", "PEG FY2",
+                        "Revenue Growth (YoY)", "R&D % of Revenue"
+                    ],
                     "Value": [
                         f"${price:.2f}" if price else "N/A",
                         f"${mc/1e9:.1f}B" if mc else "N/A",
                         f"{eps0:.2f}" if eps0 else "N/A",
                         f"{eps1:.2f}" if eps1 else "N/A",
+                        f"{eps2:.2f}" if eps2 else "N/A",
                         f"{pe0:.1f}" if pe0 else "N/A",
                         f"{pe1:.1f}" if pe1 else "N/A",
                         f"{eg1:.1f}%" if eg1 is not None else "N/A",
-                        f"{peg1:.2f}" if peg1 else "N/A"
+                        f"{eg2:.1f}%" if eg2 is not None else "N/A",
+                        f"{peg1:.2f}" if peg1 else "N/A",
+                        f"{peg2:.2f}" if peg2 else "N/A",
+                        rev_growth_pct,
+                        rnd_pct_str
                     ]
                 }
 
-                st.dataframe(pd.DataFrame(metrics_data), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    pd.DataFrame(metrics_data),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-                st.caption(f"**ISM Relevance:** {ticker} is in **{info.get('industry', '—')}**")
+                st.caption(f"**ISM Relevance:** {ticker} belongs to **{info.get('industry', '—')}**")
             else:
                 st.info("👈 Click any row in the baskets on the left to see detailed analysis")
 
