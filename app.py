@@ -386,8 +386,9 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
     )
     return drivers
 
-# ====================== INDUSTRY EXPOSURE MAP ======================
+# ====================== INDUSTRY EXPOSURE MAP (Expanded + Shorts) ======================
 INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
+    # === ORIGINAL ENTRIES (unchanged) ===
     "Auto Manufacturers": {DriverName.DEMAND_MOMENTUM: 0.92, DriverName.LABOR_TIGHTNESS: 0.70},
     "Auto Parts": {DriverName.DEMAND_MOMENTUM: 0.88, DriverName.LABOR_TIGHTNESS: 0.68},
     "Aerospace & Defense": {DriverName.DEMAND_MOMENTUM: 0.80, DriverName.LABOR_TIGHTNESS: 0.55},
@@ -420,6 +421,51 @@ INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
     "Semiconductors": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.CAPEX_PRESSURE: 0.90},
     "Computer Hardware": {DriverName.DEMAND_MOMENTUM: 0.70, DriverName.CAPEX_PRESSURE: 0.60},
     "Electronic Components": {DriverName.DEMAND_MOMENTUM: 0.75},
+
+    # === NEW EXPANDED ENTRIES (positive cyclicals) ===
+    "Transportation Equipment": {DriverName.DEMAND_MOMENTUM: 0.82},
+    "Machinery": {DriverName.CAPEX_PRESSURE: 0.85, DriverName.DEMAND_MOMENTUM: 0.78},
+    "Metal Fabrication": {DriverName.DEMAND_MOMENTUM: 0.72, DriverName.INPUT_COST_INFLATION: 0.65},
+    "Tools & Accessories": {DriverName.CAPEX_PRESSURE: 0.68},
+    "Construction Materials": {DriverName.CAPEX_PRESSURE: 0.82},
+    "Electrical Equipment": {DriverName.CAPEX_PRESSURE: 0.88},
+    "Heavy Construction": {DriverName.CAPEX_PRESSURE: 0.85},
+
+    # === NEW DEFENSIVE / SHORT CANDIDATES (negative weights) ===
+    "Consumer Defensive": {DriverName.DEMAND_MOMENTUM: -0.55, DriverName.LABOR_TIGHTNESS: -0.40},
+    "Packaged Foods": {DriverName.DEMAND_MOMENTUM: -0.50},
+    "Beverages - Non-Alcoholic": {DriverName.DEMAND_MOMENTUM: -0.45},
+    "Household & Personal Products": {DriverName.DEMAND_MOMENTUM: -0.60},
+    "Utilities": {DriverName.DEMAND_MOMENTUM: -0.65, DriverName.CAPEX_PRESSURE: -0.40},
+    "Utilities - Regulated Electric": {DriverName.DEMAND_MOMENTUM: -0.70},
+    "Utilities - Regulated Gas": {DriverName.DEMAND_MOMENTUM: -0.55},
+    "Healthcare": {DriverName.DEMAND_MOMENTUM: -0.40},
+    "Biotechnology": {DriverName.DEMAND_MOMENTUM: -0.35},
+    "Pharmaceuticals": {DriverName.DEMAND_MOMENTUM: -0.42},
+    "Medical Devices": {DriverName.DEMAND_MOMENTUM: -0.30},
+    "Drug Manufacturers": {DriverName.DEMAND_MOMENTUM: -0.45},
+    "Real Estate": {DriverName.DEMAND_MOMENTUM: -0.75},
+    "REIT - Residential": {DriverName.DEMAND_MOMENTUM: -0.80},
+    "REIT - Diversified": {DriverName.DEMAND_MOMENTUM: -0.65},
+    "Residential Real Estate": {DriverName.DEMAND_MOMENTUM: -0.78},
+    "Banks - Regional": {DriverName.DEMAND_MOMENTUM: -0.35},
+    "Banks - Diversified": {DriverName.DEMAND_MOMENTUM: -0.30},
+    "Insurance": {DriverName.DEMAND_MOMENTUM: -0.25},
+    "Software - Application": {DriverName.DEMAND_MOMENTUM: -0.20},
+    "Software - Infrastructure": {DriverName.DEMAND_MOMENTUM: -0.15},
+    "Internet Content & Information": {DriverName.DEMAND_MOMENTUM: -0.25},
+    "Discount Stores": {DriverName.DEMAND_MOMENTUM: -0.40},
+    "Consumer Cyclical": {DriverName.DEMAND_MOMENTUM: -0.30},   # broad defensive tilt
+
+    # === NEUTRAL / LOW SENSITIVITY (small weights) ===
+    "Communication Services": {DriverName.DEMAND_MOMENTUM: 0.10},
+    "Media": {DriverName.DEMAND_MOMENTUM: -0.10},
+    "Entertainment": {DriverName.DEMAND_MOMENTUM: -0.15},
+    "Financial Services": {DriverName.DEMAND_MOMENTUM: -0.20},
+    "Asset Management": {DriverName.DEMAND_MOMENTUM: -0.25},
+    "Capital Markets": {DriverName.DEMAND_MOMENTUM: -0.18},
+    "Information Technology Services": {DriverName.DEMAND_MOMENTUM: 0.15},
+    "Semiconductor Memory": {DriverName.CAPEX_PRESSURE: 0.75},
 }
 
 MANUAL_EXPOSURE_OVERRIDES: Dict[str, Dict[DriverName, float]] = {
@@ -1164,10 +1210,19 @@ with tab2:
 
             st.divider()
 
-            section_header("Bottom Ranked — Short Candidates")
-            bottom_df = scored_df.tail(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+                        section_header("Bottom Ranked — Short Candidates")
+            
+            # === IMPROVED SHORT CANDIDATES (only real negative scores) ===
+            short_candidates = scored_df[scored_df["ism_score"] < -0.08].head(40).copy()
+            
+            if short_candidates.empty:
+                st.info("No strong short signals in the current ISM regime (most stocks are neutral or positive). Showing lowest exposure stocks instead.")
+                bottom_df = scored_df.tail(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+            else:
+                bottom_df = short_candidates[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+            
             bottom_df["Link"] = bottom_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-
+            
             bot_sel = st.dataframe(
                 bottom_df,
                 use_container_width=True,
