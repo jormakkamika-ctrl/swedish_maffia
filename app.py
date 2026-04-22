@@ -670,14 +670,34 @@ def parse_report_text(text: str):
     month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
     month_year = month_match.group(0) if month_match else "Unknown"
 
-    def get_list(pattern, src):
-        match = re.search(pattern, src, re.DOTALL | re.IGNORECASE)
-        if not match: return []
-        raw = match.group(1).replace(" and ", "; ")
-        return [x.strip().strip('.') for x in raw.split(";") if len(x.strip()) > 3]
+    # === NEW ROBUST get_list (replaces the old nested function) ===
+    def get_list(pattern_type: str, src: str) -> list:
+        """Improved extractor for growth/contraction lists (handles January 2026 format)."""
+        if pattern_type == "growth":
+            patterns = [
+                r"The \d+ manufacturing industries reporting growth .*? are: (.*?)(?:\.(?!\s*[A-Za-z])|\s+The|\s*$)",
+                r"reporting growth in .*? — listed in order — are: (.*?)\.",
+                r"reporting growth.*?:(.*?)(?=\.|\n\n|The |INDUSTRIES)",
+            ]
+        else:  # contraction
+            patterns = [
+                r"The \d+ .*?industries reporting contraction .*? are: (.*?)(?:\.(?!\s*[A-Za-z])|\s+The|\s*$)",
+                r"reporting contraction in .*? — in the following order — are: (.*?)\.",
+                r"reporting contraction.*?:(.*?)(?=\.|\n\n|The |INDUSTRIES)",
+            ]
+        
+        for pat in patterns:
+            match = re.search(pat, src, re.DOTALL | re.IGNORECASE)
+            if match:
+                raw = match.group(1).replace(" and ", "; ").replace("&", "and")
+                items = [x.strip().strip('.').strip() for x in re.split(r';\s*|\s+and\s+', raw) if len(x.strip()) > 3]
+                return items
+        return []
 
-    growth = get_list(r"reporting growth in \w+.*?\s+are:(.*?)\.\s*The", text)
-    contr = get_list(r"reporting contraction in \w+.*?\s+are:(.*?)\.", text)
+    # === UPDATED CALLS (this is what you were asking about) ===
+    growth = get_list("growth", text)
+    contr = get_list("contraction", text)
+    
     comments = get_respondent_comments(text)
     subcomponents = parse_ism_subcomponents(text)
     return pmi, month_year, growth, contr, comments, subcomponents
@@ -923,12 +943,24 @@ with tab1:
                 """, unsafe_allow_html=True)
 
     with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
-        if comments_list:
-            st.markdown("\n\n".join(comments_list))
-        else:
-            st.info("No respondent comments parsed for this report.")
-
-    st.divider()
+    if comments_list:
+        st.markdown("**Latest Report — " + latest_date.strftime('%B %Y') + "**")
+        st.markdown("\n\n".join(comments_list))
+        st.divider()
+    
+    # === New: Historical comments ===
+    st.subheader("Previous Months' Respondent Comments")
+    historical_dates = sorted(report_metadata.keys(), reverse=True)[:6]  # last 6 months
+    
+    for d in historical_dates[1:]:  # skip the latest (already shown)
+        meta = report_metadata[d]
+        comments = meta.get("comments", [])
+        month_title = d.strftime('%B %Y')
+        with st.expander(f"{month_title} Comments ({len(comments)} quotes)"):
+            if comments:
+                st.markdown("\n\n".join(comments))
+            else:
+                st.info("No respondent comments available for this month.")
 
     section_header("6-Month Sector Momentum", "Rolling ISM growth/contraction score by industry")
 
