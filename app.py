@@ -702,21 +702,17 @@ with tab1:
                     fig.update_yaxes(title="MACD", row=2, col=1)
                     st.plotly_chart(fig, use_container_width=True)
 
-                # ====================== PHASE 2 METRICS ======================
+                                # ====================== PHASE 2 METRICS — SPLIT SIDE-BY-SIDE ======================
                 price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
                 mc = info.get("marketCap") or 0
 
-                # Core EPS & PE
                 eps0 = info.get("trailingEps")
                 eps1 = info.get("forwardEps")
 
-                # Try to get EPS FY2 from calendar / analyst estimates
+                # EPS FY2 attempt
                 try:
                     calendar = t.calendar
-                    if not calendar.empty and 'Forward EPS' in calendar.columns:
-                        eps2 = calendar['Forward EPS'].iloc[0] if len(calendar) > 1 else None
-                    else:
-                        eps2 = None
+                    eps2 = calendar['Forward EPS'].iloc[0] if not calendar.empty and 'Forward EPS' in calendar.columns else None
                 except:
                     eps2 = None
 
@@ -729,57 +725,51 @@ with tab1:
                 peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 and eg1 != 0 else None
                 peg2 = (pe1 / (eg2 / 100)) if pe1 and eg2 and eg2 != 0 else None
 
-                # Revenue Growth (YoY)
                 rev_growth = info.get("revenueGrowth")
-                if rev_growth is not None:
-                    rev_growth_pct = f"{rev_growth*100:.1f}%"
-                else:
-                    rev_growth_pct = "N/A"
+                rev_growth_pct = f"{rev_growth*100:.1f}%" if rev_growth is not None else "N/A"
 
-                # R&D % of Revenue
+                # R&D %
                 try:
                     financials = t.financials
-                    if not financials.empty:
-                        revenue = financials.loc['Total Revenue'].iloc[0] if 'Total Revenue' in financials.index else None
-                        rnd = financials.loc['Research And Development'].iloc[0] if 'Research And Development' in financials.index else None
-                        rnd_pct = (rnd / revenue * 100) if revenue and rnd else None
-                        rnd_pct_str = f"{rnd_pct:.1f}%" if rnd_pct is not None else "N/A"
-                    else:
-                        rnd_pct_str = "N/A"
+                    revenue = financials.loc['Total Revenue'].iloc[0] if not financials.empty and 'Total Revenue' in financials.index else None
+                    rnd = financials.loc['Research And Development'].iloc[0] if not financials.empty and 'Research And Development' in financials.index else None
+                    rnd_pct_str = f"{(rnd / revenue * 100):.1f}%" if revenue and rnd else "N/A"
                 except:
                     rnd_pct_str = "N/A"
 
-                metrics_data = {
-                    "Metric": [
-                        "Current Price", "Market Cap",
-                        "EPS FY0 (TTM)", "EPS FY1 (Est.)", "EPS FY2 (Est.)",
-                        "PE FY0", "PE FY1",
-                        "EG F1 %", "EG F2 %",
-                        "PEG FY1", "PEG FY2",
-                        "Revenue Growth (YoY)", "R&D % of Revenue"
-                    ],
-                    "Value": [
-                        f"${price:.2f}" if price else "N/A",
-                        f"${mc/1e9:.1f}B" if mc else "N/A",
-                        f"{eps0:.2f}" if eps0 else "N/A",
-                        f"{eps1:.2f}" if eps1 else "N/A",
-                        f"{eps2:.2f}" if eps2 else "N/A",
-                        f"{pe0:.1f}" if pe0 else "N/A",
-                        f"{pe1:.1f}" if pe1 else "N/A",
-                        f"{eg1:.1f}%" if eg1 is not None else "N/A",
-                        f"{eg2:.1f}%" if eg2 is not None else "N/A",
-                        f"{peg1:.2f}" if peg1 else "N/A",
-                        f"{peg2:.2f}" if peg2 else "N/A",
-                        rev_growth_pct,
-                        rnd_pct_str
-                    ]
-                }
+                # Split into two clean tables
+                col_metric1, col_metric2 = st.columns(2)
 
-                st.dataframe(
-                    pd.DataFrame(metrics_data),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                with col_metric1:
+                    left_metrics = {
+                        "Metric": ["Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1 (Est.)", "EPS FY2 (Est.)",
+                                   "PE FY0", "PE FY1"],
+                        "Value": [
+                            f"${price:.2f}" if price else "N/A",
+                            f"${mc/1e9:.1f}B" if mc else "N/A",
+                            f"{eps0:.2f}" if eps0 else "N/A",
+                            f"{eps1:.2f}" if eps1 else "N/A",
+                            f"{eps2:.2f}" if eps2 else "N/A",
+                            f"{pe0:.1f}" if pe0 else "N/A",
+                            f"{pe1:.1f}" if pe1 else "N/A"
+                        ]
+                    }
+                    st.dataframe(pd.DataFrame(left_metrics), use_container_width=True, hide_index=True)
+
+                with col_metric2:
+                    right_metrics = {
+                        "Metric": ["EG F1 %", "EG F2 %", "PEG FY1", "PEG FY2",
+                                   "Revenue Growth (YoY)", "R&D % of Revenue"],
+                        "Value": [
+                            f"{eg1:.1f}%" if eg1 is not None else "N/A",
+                            f"{eg2:.1f}%" if eg2 is not None else "N/A",
+                            f"{peg1:.2f}" if peg1 else "N/A",
+                            f"{peg2:.2f}" if peg2 else "N/A",
+                            rev_growth_pct,
+                            rnd_pct_str
+                        ]
+                    }
+                    st.dataframe(pd.DataFrame(right_metrics), use_container_width=True, hide_index=True)
 
                 st.caption(f"**ISM Relevance:** {ticker} belongs to **{info.get('industry', '—')}**")
             else:
