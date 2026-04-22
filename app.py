@@ -669,28 +669,26 @@ with tab1:
                     info = t.info
                     hist = t.history(period="1y")
 
-                                # ====================== IMPROVED CHART + METRICS ======================
+                                                # ====================== PROFESSIONAL TWO-PANEL MACD CHART ======================
                 if not hist.empty:
-                    # Calculate MACD
                     macd, signal, histo = calculate_macd(hist)
 
-                    # Create professional two-panel chart
                     from plotly.subplots import make_subplots
                     fig = make_subplots(
                         rows=2, cols=1,
                         shared_xaxes=True,
                         vertical_spacing=0.08,
-                        row_heights=[0.65, 0.35],
+                        row_heights=[0.68, 0.32],
                         subplot_titles=(f"{ticker} — 1 Year Price", "MACD (12, 26, 9)")
                     )
 
-                    # Price panel (top)
+                    # Top panel: Price
                     fig.add_trace(go.Scatter(
                         x=hist.index, y=hist['Close'],
                         name="Close Price", line=dict(color="#1f77b4", width=2)
                     ), row=1, col=1)
 
-                    # MACD panel (bottom)
+                    # Bottom panel: MACD
                     fig.add_trace(go.Scatter(
                         x=hist.index, y=macd, name="MACD", line=dict(color="#ff7f0e")
                     ), row=2, col=1)
@@ -703,17 +701,18 @@ with tab1:
                     ), row=2, col=1)
 
                     fig.update_layout(
-                        height=520,
-                        template="plotly_dark",   # matches your app
+                        height=560,
+                        template="plotly_dark",
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                        margin=dict(l=40, r=40, t=40, b=40)
+                        margin=dict(l=40, r=40, t=50, b=40)
                     )
                     fig.update_yaxes(title="Price ($)", row=1, col=1)
                     fig.update_yaxes(title="MACD", row=2, col=1)
+
                     st.plotly_chart(fig, use_container_width=True)
 
-                # ====================== KEY METRICS TABLE ======================
-                price = info.get("currentPrice") or info.get("regularMarketPrice") or hist['Close'].iloc[-1] if not hist.empty else None
+                # ====================== METRICS TABLE ======================
+                price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
                 mc = info.get("marketCap") or 0
 
                 eps0 = info.get("trailingEps")
@@ -727,10 +726,8 @@ with tab1:
                 peg1 = (pe1 / (eg1 / 100)) if pe1 and eg1 and eg1 != 0 else None
 
                 metrics_data = {
-                    "Metric": [
-                        "Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1 (Est.)",
-                        "PE FY0", "PE FY1", "EG F1 %", "PEG FY1"
-                    ],
+                    "Metric": ["Current Price", "Market Cap", "EPS FY0 (TTM)", "EPS FY1 (Est.)",
+                               "PE FY0", "PE FY1", "EG F1 %", "PEG FY1"],
                     "Value": [
                         f"${price:.2f}" if price else "N/A",
                         f"${mc/1e9:.1f}B" if mc else "N/A",
@@ -743,11 +740,7 @@ with tab1:
                     ]
                 }
 
-                st.dataframe(
-                    pd.DataFrame(metrics_data),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(pd.DataFrame(metrics_data), use_container_width=True, hide_index=True)
 
                 st.caption(f"**ISM Relevance:** {ticker} is in **{info.get('industry', '—')}**")
             else:
