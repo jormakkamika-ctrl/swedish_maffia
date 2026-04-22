@@ -944,18 +944,35 @@ with tab2:
         col_left, col_right = st.columns([2, 3])
 
         with col_left:
-            st.subheader("🏆 Top Ranked Stocks")
-            display_df = scored_df.head(50)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
-            selection = st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row"
-            )
-            if selection["selection"]["rows"]:
-                idx = selection["selection"]["rows"][0]
-                st.session_state.selected_ticker_tab2 = display_df.iloc[idx]["Ticker"]
+                    st.subheader("🏆 Top Ranked Stocks")
+                    display_df = scored_df.head(50)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+                    selection = st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row"
+                    )
+                    if selection["selection"]["rows"]:
+                        idx = selection["selection"]["rows"][0]
+                        st.session_state.selected_ticker_tab2 = display_df.iloc[idx]["Ticker"]
+
+                    st.divider()
+
+                    # NEW: Bottom ranked stocks for short ideas
+                    st.subheader("📉 Bottom Ranked Stocks (Potential Shorts)")
+                    bottom_df = scored_df.tail(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+                    st.dataframe(
+                        bottom_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Market Cap": st.column_config.TextColumn("Market Cap"),
+                            "Company": st.column_config.TextColumn("Company", width="medium"),
+                            "why": st.column_config.TextColumn("Why this stock?", width="large"),
+                            "ism_score": st.column_config.NumberColumn("ISM Score", format="%.2f"),
+                        }
+                    )
 
         with col_right:
             ticker = st.session_state.get("selected_ticker_tab2")
