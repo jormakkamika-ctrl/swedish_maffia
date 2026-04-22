@@ -381,22 +381,24 @@ def load_all_us_tickers():
         return pd.DataFrame()
 
 
-# ====================== INSTANT UNIVERSE LOADER (Professional Grade) ======================
-@st.cache_data(ttl=86400, show_spinner=False)
+# ====================== INSTANT UNIVERSE LOADER (PRODUCTION READY) ======================
+@st.cache_data(ttl=86400 * 7, show_spinner=False)   # cache for 7 days
 def get_full_stock_universe():
-    """Loads pre-built static universe — instant + zero rate limits."""
-    csv_url = "https://github.com/jormakkamika-ctrl/swedish_maffia/tree/main/universe.csv"  # ← CHANGE THIS
-
+    """Loads pre-built static universe — loads in < 2 seconds, zero rate limits."""
+    csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
+    
     try:
         df = pd.read_csv(csv_url)
         as_of = df['as_of_date'].iloc[0]
-        st.success(f"✅ Loaded pre-built universe • {len(df):,} stocks • as of {as_of}")
         
+        st.success(f"✅ Loaded static universe • **{len(df):,} stocks** • as of {as_of}")
+        
+        # Format Market Cap for display
         df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${x/1_000_000_000:.1f}B")
         return df
     except Exception as e:
-        st.warning("Static universe not found. Falling back to live build (slow)...")
-        # You can keep the old slow function here as fallback if you want
+        st.error(f"Failed to load universe.csv: {e}")
+        st.info("Falling back to live build (slow) is disabled for now.")
         return pd.DataFrame()
 
 # ====================== SCRAPER ======================
