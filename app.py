@@ -223,9 +223,33 @@ def explain_score(row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> 
                 reasons.append(f"{strength:+.1f}×{exposure:.1f} {driver_name.value}")
     return " | ".join(reasons[:4]) or "Neutral exposure"
 
-# ====================== FULL UPDATED TAG & SCORE FUNCTION ======================
+def get_best_exposure(yahoo_ind: str) -> Dict[DriverName, float]:
+    """Exact match first → smart keyword fallback. Very robust."""
+    if not yahoo_ind or not isinstance(yahoo_ind, str):
+        return {}
+
+    clean_ind = yahoo_ind.strip()
+
+    # 1. Exact match (current behavior, fastest)
+    if clean_ind in INDUSTRY_EXPOSURE_MAP:
+        return INDUSTRY_EXPOSURE_MAP[clean_ind].copy()
+
+    # 2. Keyword fallback (catches most variations)
+    for mapped_ind, exposure in INDUSTRY_EXPOSURE_MAP.items():
+        # Check if any key word from our mapping appears in the Yahoo string
+        if any(word.lower() in clean_ind.lower() for word in mapped_ind.split()):
+            return exposure.copy()
+
+        # Bonus: reverse check (if Yahoo string contains our mapped industry)
+        if any(word.lower() in mapped_ind.lower() for word in clean_ind.split()):
+            return exposure.copy()
+
+    # No match found
+    return {}
+# ====================== FULL UPDATED TAG & SCORE FUNCTION (IMPROVED) ======================
 def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, EconomicDriver]) -> pd.DataFrame:
-    """Apply industry mapping + manual ticker overrides, then compute ISM score."""
+    """Apply industry mapping + manual ticker overrides, then compute ISM score.
+    Now includes smart keyword fallback for more robust Yahoo Industry matching."""
     if stocks_df.empty:
         return stocks_df
 
@@ -234,16 +258,16 @@ def tag_and_score_stocks(stocks_df: pd.DataFrame, drivers: Dict[DriverName, Econ
         yahoo_ind = row.get("Yahoo Industry", "")
         ticker = row.get("Ticker", "")
 
-        # 1. Start with industry-level mapping
-        exposures = INDUSTRY_EXPOSURE_MAP.get(yahoo_ind, {}).copy()
+        # 1. Get exposures using robust matcher
+        exposures = get_best_exposure(yahoo_ind)
 
-        # 2. Apply manual ticker overrides (higher weight wins)
+        # 2. Apply manual ticker overrides (highest priority)
         if ticker in MANUAL_EXPOSURE_OVERRIDES:
             override = MANUAL_EXPOSURE_OVERRIDES[ticker]
             for d, weight in override.items():
                 exposures[d] = max(exposures.get(d, 0.0), weight)
 
-        # 3. Build vector aligned to DriverName order
+        # 3. Build aligned vector
         vector = [exposures.get(d, 0.0) for d in DriverName]
         exposure_matrix.append(vector)
 
