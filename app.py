@@ -48,27 +48,29 @@ NAICS_MAPPING = {
     "Miscellaneous Manufacturing": "339",
 }
 
-# ====================== PRIMARY ISM → YAHOO INDUSTRY MAPPING (broad but still primary) ======================
-# Expanded to cover ~1,500 >$1B stocks dynamically when filtering the full universe
+# ====================== PRIMARY ISM → YAHOO INDUSTRY MAPPING ======================
 PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
-    "Food, Beverage & Tobacco Products": ["Packaged Foods", "Beverages - Non-Alcoholic", "Tobacco", "Confectioners", "Farm Products"],
-    "Textile Mills": ["Textile Manufacturing", "Apparel Manufacturing"],
+    "Food, Beverage & Tobacco Products": [
+        "Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers",
+        "Tobacco", "Confectioners", "Farm Products"
+    ],
+    "Textile Mills": ["Textile Manufacturing"],
     "Apparel, Leather & Allied Products": ["Apparel Manufacturing", "Footwear & Accessories"],
-    "Wood Products": ["Lumber & Wood Production", "Building Materials", "Residential Construction"],
+    "Wood Products": ["Lumber & Wood Production"],
     "Paper Products": ["Paper & Forest Products", "Packaging & Containers"],
-    "Printing & Related Support Activities": ["Packaging & Containers", "Specialty Industrial Machinery"],
-    "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream"],
-    "Chemical Products": ["Chemicals", "Specialty Chemicals"],
-    "Plastics & Rubber Products": ["Packaging & Containers", "Rubber & Plastics"],
+    "Printing & Related Support Activities": ["Packaging & Containers"],           # removed overly broad "Specialty Business Services"
+    "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream", "Thermal Coal"],
+    "Chemical Products": ["Chemicals", "Specialty Chemicals", "Agricultural Inputs"],
+    "Plastics & Rubber Products": ["Rubber & Plastics", "Packaging & Containers"],
     "Nonmetallic Mineral Products": ["Building Materials", "Construction Materials"],
     "Primary Metals": ["Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining"],
     "Fabricated Metal Products": ["Metal Fabrication", "Tools & Accessories"],
-    "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery"],
-    "Computer & Electronic Products": ["Semiconductors", "Electronic Components", "Computer Hardware"],
-    "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts", "Specialty Industrial Machinery"],
-    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts"],
-    "Furniture & Related Products": ["Furnishings, Fixtures & Appliances"],
-    "Miscellaneous Manufacturing": ["Medical Instruments & Supplies", "Leisure"],
+    "Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Pollution & Treatment Controls"],
+    "Computer & Electronic Products": ["Semiconductors", "Electronic Components", "Computer Hardware", "Communication Equipment"],
+    "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
+    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
+    "Furniture & Related Products": ["Home Furnishings & Fixtures"],
+    "Miscellaneous Manufacturing": ["Medical Instruments & Supplies", "Medical Devices", "Leisure", "Recreational Vehicles"]
 }
 
 # ====================== ECONOMIC EXPOSURE ONTOLOGY (unchanged - for Tab 2) ======================
