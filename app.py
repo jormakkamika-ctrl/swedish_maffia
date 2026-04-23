@@ -288,24 +288,48 @@ NAICS_MAPPING = {
 }
 
 PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
-"Food, Beverage & Tobacco Products": ["Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers", "Tobacco", "Confectioners", "Farm Products"],
-"Textile Mills": ["Textile Manufacturing"],
-"Apparel, Leather & Allied Products": ["Apparel Manufacturing", "Footwear & Accessories"],
-"Wood Products": ["Lumber & Wood Production", "Building Materials", "Building Products & Equipment"],
-"Paper Products": ["Paper & Forest Products", "Packaging & Containers"],
-"Printing & Related Support Activities": ["Packaging & Containers"],
-"Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream", "Thermal Coal"],
-"Chemical Products": ["Chemicals", "Specialty Chemicals", "Agricultural Inputs"],
-"Plastics & Rubber Products": ["Rubber & Plastics", "Packaging & Containers"],
-"Nonmetallic Mineral Products": ["Building Materials", "Construction Materials"],
-"Primary Metals": ["Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining", "Gold", "Other Precious Metals & Mining"],
-"Fabricated Metal Products": ["Metal Fabrication", "Tools & Accessories"],
-"Machinery": ["Specialty Industrial Machinery", "Farm & Heavy Construction Machinery", "Pollution & Treatment Controls"],
-"Computer & Electronic Products": ["Semiconductors", "Electronic Components", "Computer Hardware", "Communication Equipment", "Semiconductor Equipment & Materials"],
-"Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
-"Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
-"Furniture & Related Products": ["Home Furnishings & Fixtures", "Furnishings, Fixtures & Appliances"],
-"Miscellaneous Manufacturing": ["Medical Instruments & Supplies", "Medical Devices", "Leisure", "Recreational Vehicles"]
+    "Food, Beverage & Tobacco Products": [
+        "Packaged Foods", "Beverages - Non-Alcoholic", "Beverages - Brewers",
+        "Tobacco", "Confectioners", "Farm Products"
+    ],
+    "Textile Mills": ["Textile Manufacturing"],
+    "Apparel, Leather & Allied Products": ["Apparel Manufacturing", "Footwear & Accessories", "Apparel Retail"],
+    "Wood Products": [
+        "Lumber & Wood Production", "Building Materials", "Building Products & Equipment",
+        "Home Improvement Retail"                                      # ← added
+    ],
+    "Paper Products": ["Paper & Forest Products", "Packaging & Containers"],
+    "Printing & Related Support Activities": ["Packaging & Containers"],
+    "Petroleum & Coal Products": ["Oil & Gas Refining & Marketing", "Oil & Gas Midstream", "Thermal Coal"],
+    "Chemical Products": ["Chemicals", "Specialty Chemicals", "Agricultural Inputs"],
+    "Plastics & Rubber Products": ["Rubber & Plastics", "Packaging & Containers"],
+    "Nonmetallic Mineral Products": ["Building Materials", "Construction Materials"],
+    "Primary Metals": [
+        "Steel", "Aluminum", "Copper", "Other Industrial Metals & Mining",
+        "Gold", "Other Precious Metals & Mining"
+    ],
+    "Fabricated Metal Products": ["Metal Fabrication", "Tools & Accessories"],
+    "Machinery": [
+        "Specialty Industrial Machinery", 
+        "Farm & Heavy Construction Machinery", 
+        "Pollution & Treatment Controls"
+    ],
+    "Computer & Electronic Products": [
+        "Semiconductors", 
+        "Electronic Components", 
+        "Computer Hardware", 
+        "Communication Equipment",
+        "Semiconductor Equipment & Materials"
+    ],
+    "Electrical Equipment, Appliances & Components": ["Electrical Equipment & Parts"],
+    "Transportation Equipment": ["Aerospace & Defense", "Auto Manufacturers", "Auto Parts", "Railroads"],
+    "Furniture & Related Products": ["Home Furnishings & Fixtures", "Furnishings, Fixtures & Appliances"],
+    "Miscellaneous Manufacturing": [
+        "Medical Instruments & Supplies", 
+        "Medical Devices", 
+        "Leisure", 
+        "Recreational Vehicles"
+    ]
 }
 
 # ====================== ECONOMIC DRIVER CLASSES ======================
