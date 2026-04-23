@@ -386,26 +386,30 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
     )
     return drivers
 
-# ====================== INDUSTRY EXPOSURE MAP (Expanded + Shorts) ======================
+# ====================== PROFESSIONAL ECONOMIC EXPOSURE MAP (Updated with Claude's best ideas) ======================
 INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
-    # === ORIGINAL ENTRIES (unchanged) ===
-    "Auto Manufacturers": {DriverName.DEMAND_MOMENTUM: 0.92, DriverName.LABOR_TIGHTNESS: 0.70},
-    "Auto Parts": {DriverName.DEMAND_MOMENTUM: 0.88, DriverName.LABOR_TIGHTNESS: 0.68},
-    "Aerospace & Defense": {DriverName.DEMAND_MOMENTUM: 0.80, DriverName.LABOR_TIGHTNESS: 0.55},
-    "Residential Construction": {DriverName.DEMAND_MOMENTUM: 0.85},
+    # DEMAND MOMENTUM
+    "Auto Manufacturers": {DriverName.DEMAND_MOMENTUM: 0.92},
+    "Auto Parts": {DriverName.DEMAND_MOMENTUM: 0.88},
+    "Aerospace & Defense": {DriverName.DEMAND_MOMENTUM: 0.80},
+    "Residential Construction": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.LABOR_TIGHTNESS: 0.75},
     "Consumer Electronics": {DriverName.DEMAND_MOMENTUM: 0.75},
-    "Internet Retail": {DriverName.DEMAND_MOMENTUM: 0.60},
-    "Specialty Retail": {DriverName.DEMAND_MOMENTUM: 0.55},
+    "Internet Retail": {DriverName.DEMAND_MOMENTUM: 0.55},
+    "Specialty Retail": {DriverName.DEMAND_MOMENTUM: 0.50},
     "Railroads": {DriverName.DEMAND_MOMENTUM: 0.65},
     "Integrated Freight & Logistics": {DriverName.DEMAND_MOMENTUM: 0.60},
     "Lumber & Wood Production": {DriverName.DEMAND_MOMENTUM: 0.75},
-    "Specialty Industrial Machinery": {DriverName.CAPEX_PRESSURE: 0.92, DriverName.DEMAND_MOMENTUM: 0.78, DriverName.LABOR_TIGHTNESS: 0.65},
-    "Farm & Heavy Construction Machinery": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.72, DriverName.LABOR_TIGHTNESS: 0.60},
+
+    # CAPEX & CAPACITY PRESSURE
+    "Specialty Industrial Machinery": {DriverName.CAPEX_PRESSURE: 0.92, DriverName.DEMAND_MOMENTUM: 0.78},
+    "Farm & Heavy Construction Machinery": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.72},
     "Electrical Equipment & Parts": {DriverName.CAPEX_PRESSURE: 0.85, DriverName.DEMAND_MOMENTUM: 0.65},
     "Building Products & Equipment": {DriverName.CAPEX_PRESSURE: 0.80},
     "Engineering & Construction": {DriverName.CAPEX_PRESSURE: 0.88},
     "Semiconductor Equipment & Materials": {DriverName.CAPEX_PRESSURE: 0.95, DriverName.DEMAND_MOMENTUM: 0.82},
     "Industrial Distribution": {DriverName.CAPEX_PRESSURE: 0.70},
+
+    # INPUT COST INFLATION
     "Steel": {DriverName.INPUT_COST_INFLATION: 0.88, DriverName.DEMAND_MOMENTUM: 0.75},
     "Aluminum": {DriverName.INPUT_COST_INFLATION: 0.85, DriverName.DEMAND_MOMENTUM: 0.70},
     "Copper": {DriverName.INPUT_COST_INFLATION: 0.90, DriverName.DEMAND_MOMENTUM: 0.78},
@@ -418,54 +422,26 @@ INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
     "Oil & Gas Refining & Marketing": {DriverName.INPUT_COST_INFLATION: 0.65},
     "Oil & Gas Equipment & Services": {DriverName.INPUT_COST_INFLATION: 0.72},
     "Packaging & Containers": {DriverName.INPUT_COST_INFLATION: 0.70},
-    "Semiconductors": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.CAPEX_PRESSURE: 0.90},
+
+    # SEMICONDUCTORS & TECH HARDWARE
+    "Semiconductors": {DriverName.DEMAND_MOMENTUM: 0.85, DriverName.CAPEX_PRESSURE: 0.90, DriverName.LABOR_TIGHTNESS: 0.70},
     "Computer Hardware": {DriverName.DEMAND_MOMENTUM: 0.70, DriverName.CAPEX_PRESSURE: 0.60},
     "Electronic Components": {DriverName.DEMAND_MOMENTUM: 0.75},
 
-    # === NEW EXPANDED ENTRIES (positive cyclicals) ===
-    "Transportation Equipment": {DriverName.DEMAND_MOMENTUM: 0.82},
-    "Machinery": {DriverName.CAPEX_PRESSURE: 0.85, DriverName.DEMAND_MOMENTUM: 0.78},
-    "Metal Fabrication": {DriverName.DEMAND_MOMENTUM: 0.72, DriverName.INPUT_COST_INFLATION: 0.65},
-    "Tools & Accessories": {DriverName.CAPEX_PRESSURE: 0.68},
-    "Construction Materials": {DriverName.CAPEX_PRESSURE: 0.82},
-    "Electrical Equipment": {DriverName.CAPEX_PRESSURE: 0.88},
-    "Heavy Construction": {DriverName.CAPEX_PRESSURE: 0.85},
+    # LABOR MARKET TIGHTNESS (expanded)
+    "Auto Manufacturers": {DriverName.LABOR_TIGHTNESS: 0.70},
+    "Auto Parts": {DriverName.LABOR_TIGHTNESS: 0.68},
+    "Specialty Industrial Machinery": {DriverName.LABOR_TIGHTNESS: 0.65},
+    "Farm & Heavy Construction Machinery": {DriverName.LABOR_TIGHTNESS: 0.60},
+    "Aerospace & Defense": {DriverName.LABOR_TIGHTNESS: 0.55},
+    "Residential Construction": {DriverName.LABOR_TIGHTNESS: 0.75},   # Claude's good suggestion
 
-    # === NEW DEFENSIVE / SHORT CANDIDATES (negative weights) ===
-    "Consumer Defensive": {DriverName.DEMAND_MOMENTUM: -0.55, DriverName.LABOR_TIGHTNESS: -0.40},
-    "Packaged Foods": {DriverName.DEMAND_MOMENTUM: -0.50},
-    "Beverages - Non-Alcoholic": {DriverName.DEMAND_MOMENTUM: -0.45},
-    "Household & Personal Products": {DriverName.DEMAND_MOMENTUM: -0.60},
-    "Utilities": {DriverName.DEMAND_MOMENTUM: -0.65, DriverName.CAPEX_PRESSURE: -0.40},
-    "Utilities - Regulated Electric": {DriverName.DEMAND_MOMENTUM: -0.70},
-    "Utilities - Regulated Gas": {DriverName.DEMAND_MOMENTUM: -0.55},
-    "Healthcare": {DriverName.DEMAND_MOMENTUM: -0.40},
-    "Biotechnology": {DriverName.DEMAND_MOMENTUM: -0.35},
-    "Pharmaceuticals": {DriverName.DEMAND_MOMENTUM: -0.42},
-    "Medical Devices": {DriverName.DEMAND_MOMENTUM: -0.30},
-    "Drug Manufacturers": {DriverName.DEMAND_MOMENTUM: -0.45},
-    "Real Estate": {DriverName.DEMAND_MOMENTUM: -0.75},
-    "REIT - Residential": {DriverName.DEMAND_MOMENTUM: -0.80},
-    "REIT - Diversified": {DriverName.DEMAND_MOMENTUM: -0.65},
-    "Residential Real Estate": {DriverName.DEMAND_MOMENTUM: -0.78},
-    "Banks - Regional": {DriverName.DEMAND_MOMENTUM: -0.35},
-    "Banks - Diversified": {DriverName.DEMAND_MOMENTUM: -0.30},
-    "Insurance": {DriverName.DEMAND_MOMENTUM: -0.25},
-    "Software - Application": {DriverName.DEMAND_MOMENTUM: -0.20},
-    "Software - Infrastructure": {DriverName.DEMAND_MOMENTUM: -0.15},
-    "Internet Content & Information": {DriverName.DEMAND_MOMENTUM: -0.25},
-    "Discount Stores": {DriverName.DEMAND_MOMENTUM: -0.40},
-    "Consumer Cyclical": {DriverName.DEMAND_MOMENTUM: -0.30},   # broad defensive tilt
-
-    # === NEUTRAL / LOW SENSITIVITY (small weights) ===
-    "Communication Services": {DriverName.DEMAND_MOMENTUM: 0.10},
-    "Media": {DriverName.DEMAND_MOMENTUM: -0.10},
-    "Entertainment": {DriverName.DEMAND_MOMENTUM: -0.15},
-    "Financial Services": {DriverName.DEMAND_MOMENTUM: -0.20},
-    "Asset Management": {DriverName.DEMAND_MOMENTUM: -0.25},
-    "Capital Markets": {DriverName.DEMAND_MOMENTUM: -0.18},
-    "Information Technology Services": {DriverName.DEMAND_MOMENTUM: 0.15},
-    "Semiconductor Memory": {DriverName.CAPEX_PRESSURE: 0.75},
+    # NEW / REFINED ENTRIES
+    "Industrial Gases": {DriverName.INPUT_COST_INFLATION: 0.72, DriverName.CAPEX_PRESSURE: 0.68},
+    "Water Utilities": {DriverName.CAPEX_PRESSURE: 0.60},            # mild positive capex
+    "Utilities - Regulated": {DriverName.CAPEX_PRESSURE: 0.50, DriverName.DEMAND_MOMENTUM: -0.40},
+    "Medical Devices": {DriverName.DEMAND_MOMENTUM: -0.15},          # softened per Claude
+    "Pharmaceuticals": {DriverName.DEMAND_MOMENTUM: -0.20},          # softened
 }
 
 MANUAL_EXPOSURE_OVERRIDES: Dict[str, Dict[DriverName, float]] = {
