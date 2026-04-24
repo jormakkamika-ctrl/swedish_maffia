@@ -616,40 +616,33 @@ def show_stock_deep_dive(ticker: str):
                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")
             ), row=2, col=1)
 
-            # === SYNCHRONIZED CROSSHAIR THAT SPANS BOTH PANELS ===
+            # === SYNCHRONIZED CONTINUOUS CROSSHAIR ===
             fig.update_layout(
                 height=520,
-                hovermode="x unified",          # unified hover
+                hovermode="x unified",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 **PLOTLY_THEME
             )
 
-            # This is the key fix for a continuous vertical line across both subplots
-            fig.update_xaxes(
-                showspikes=True,
-                spikecolor="rgba(255,255,255,0.7)",
-                spikethickness=1,
-                spikedash="solid",
-                spikesnap="cursor",
-                spikemode="across",             # ← makes the line go through BOTH panels
-                row=1, col=1
-            )
-            fig.update_xaxes(
-                showspikes=True,
-                spikecolor="rgba(255,255,255,0.7)",
-                spikethickness=1,
-                spikedash="solid",
-                spikesnap="cursor",
-                spikemode="across",
-                row=2, col=1
-            )
+            # This forces ONE continuous vertical line across BOTH panels
+            for row in [1, 2]:
+                fig.update_xaxes(
+                    showspikes=True,
+                    spikecolor="rgba(255, 255, 255, 0.85)",
+                    spikethickness=1.5,
+                    spikedash="solid",
+                    spikesnap="cursor",
+                    spikemode="across",      # ← key setting
+                    matches='x',             # ← forces synchronization
+                    row=row, col=1
+                )
 
             fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
             fig.update_yaxes(title_text="MACD", row=2, col=1)
 
             st.plotly_chart(fig, use_container_width=True)
 
-        # === The rest of your metrics table stays exactly the same ===
+        # === Metrics table (unchanged) ===
         price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
         mc = info.get("marketCap") or 0
         eps0 = info.get("trailingEps")
