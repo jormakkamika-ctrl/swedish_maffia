@@ -683,31 +683,27 @@ def normalize_name(name: str) -> str:
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 # ====================== ROBUST INDUSTRY LIST PARSER ======================
+# ====================== ROBUST INDUSTRY LIST PARSER (FINAL) ======================
 def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
     """Ultra-robust extractor for ISM growing + contracting industries.
-    Specifically targets the main 'manufacturing industries reporting growth' list."""
+    Tested on March 2026 + January reports."""
     
-    # Growth list - two fallback patterns to handle all recent ISM formats
+    # === GROWTH SECTION ===
     growth_match = re.search(
         r'The \d+ manufacturing industries reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\.\s*reporting contraction|\.\s*The three|\Z)',
         text, re.DOTALL | re.IGNORECASE
     )
     if not growth_match:
         growth_match = re.search(
-            r'reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+ industries reporting contraction|\.\s*reporting contraction|\Z)',
+            r'reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\.\s*reporting contraction|\Z)',
             text, re.DOTALL | re.IGNORECASE
         )
     
-    # Contraction list
+    # === CONTRACTION SECTION (fixed for March phrasing) ===
     contr_match = re.search(
-        r'(?:The \d+|\d+)\s*(?:manufacturing )?industries reporting contraction[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\Z)',
+        r'reporting contraction[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\Z)',
         text, re.DOTALL | re.IGNORECASE
     )
-    if not contr_match:
-        contr_match = re.search(
-            r'reporting contraction[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\Z)',
-            text, re.DOTALL | re.IGNORECASE
-        )
     
     growth_section = growth_match.group(1).strip() if growth_match else ""
     contr_section = contr_match.group(1).strip() if contr_match else ""
@@ -721,7 +717,7 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
             if norm_ind in norm_section:
                 pos = norm_section.find(norm_ind)
                 found.append((official, pos))
-        # Preserve exact order of appearance (this is what creates the +13, +12, ... scoring)
+        # Preserve exact order → correct +13 / -3 scoring
         found.sort(key=lambda x: x[1])
         return [item[0] for item in found]
     
