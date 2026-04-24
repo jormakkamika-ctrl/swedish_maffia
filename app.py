@@ -792,11 +792,12 @@ def parse_report_text(text: str):
 
     # === UPDATED CALLS (this is what you were asking about) ===
         # === ROBUST INDUSTRY LIST EXTRACTION (UPDATED) ===
+        # === ROBUST INDUSTRY LIST EXTRACTION (POSITION-BASED) ===
     growth, contr = get_industry_lists(text)
     
-    # Temporary debug (you'll see this in the terminal when you run "Deep Refresh")
-    print(f"DEBUG - Growth industries ({len(growth)}): {growth}")
-    print(f"DEBUG - Contraction industries ({len(contr)}): {contr}")
+    # DEBUG - you will see this in the "Process Log" after Deep Refresh
+    print(f"DEBUG - Growth ({len(growth)}): {growth}")
+    print(f"DEBUG - Contraction ({len(contr)}): {contr}")
     
     comments = get_respondent_comments(text)
     subcomponents = parse_ism_subcomponents(text)
