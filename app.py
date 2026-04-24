@@ -746,42 +746,40 @@ def get_full_stock_universe():
         return pd.DataFrame()
 
 def parse_report_text(text: str):
-    """Robust parser for current PR Newswire ISM report format (March 2026 and later)."""
+    """Robust parser for current PR Newswire ISM format (April 2026)."""
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 50.0
 
     month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
     month_year = month_match.group(0) if month_match else "Unknown"
 
-    # === VERY FLEXIBLE PATTERNS FOR CURRENT FORMAT ===
-    # Common current phrasing: "The X manufacturing industries reporting growth in MONTH — listed in order — are:"
+    # Extremely tolerant extraction for growth and contraction lists
     growth = []
     contr = []
 
-    # Growth list
+    # Try several patterns that appear in recent reports
     growth_match = re.search(
-        r"(?:The \d+ manufacturing industries reporting growth|industries reporting growth).*?are:(.*?)(?:The \d+|\.|reporting contraction|MANUFACTURING AT A GLANCE)",
+        r"(?:The \d+ manufacturing industries reporting growth|industries reporting growth|reporting growth in).*?are:(.*?)(?:The \d+|reporting contraction|MANUFACTURING AT A GLANCE|$)",
         text, re.DOTALL | re.IGNORECASE
     )
     if growth_match:
         raw = growth_match.group(1)
         growth = [x.strip().strip('.') for x in re.split(r'[;\n]', raw) if len(x.strip()) > 3]
 
-    # Contraction list
     contr_match = re.search(
-        r"(?:The \d+ .*?industries reporting contraction|industries reporting contraction).*?are:(.*?)(?:The \d+|\.|MANUFACTURING AT A GLANCE)",
+        r"(?:The \d+ .*?industries reporting contraction|industries reporting contraction|reporting contraction in).*?are:(.*?)(?:The \d+|MANUFACTURING AT A GLANCE|$)",
         text, re.DOTALL | re.IGNORECASE
     )
     if contr_match:
         raw = contr_match.group(1)
         contr = [x.strip().strip('.') for x in re.split(r'[;\n]', raw) if len(x.strip()) > 3]
 
-    # Debug output so we can see what's happening
-    st.caption(f"**Parser Debug** — Growth found: {len(growth)} | Contraction: {len(contr)}")
+    # Debug output so we can see exactly what was captured
+    st.caption(f"**Parser Debug** — Growth industries found: {len(growth)} | Contraction: {len(contr)}")
     if growth:
-        st.caption(f"Growth industries: {growth[:10]}")
+        st.caption(f"Growth: {growth}")
     if contr:
-        st.caption(f"Contraction industries: {contr[:10]}")
+        st.caption(f"Contraction: {contr}")
 
     comments = get_respondent_comments(text)
     subcomponents = parse_ism_subcomponents(text)
