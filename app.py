@@ -746,41 +746,56 @@ def get_full_stock_universe():
         return pd.DataFrame()
 
 def parse_report_text(text: str):
+    """Strongly debugged version - will show us exactly what the page contains."""
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 50.0
+
     month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
     month_year = month_match.group(0) if month_match else "Unknown"
 
-    # === NEW ROBUST get_list (replaces the old nested function) ===
-    def get_list(pattern_type: str, src: str) -> list:
-        """Improved extractor for growth/contraction lists (handles January 2026 format)."""
-        if pattern_type == "growth":
-            patterns = [
-                r"The \d+ manufacturing industries reporting growth .*? are: (.*?)(?:\.(?!\s*[A-Za-z])|\s+The|\s*$)",
-                r"reporting growth in .*? — listed in order — are: (.*?)\.",
-                r"reporting growth.*?:(.*?)(?=\.|\n\n|The |INDUSTRIES)",
-            ]
-        else:  # contraction
-            patterns = [
-                r"The \d+ .*?industries reporting contraction .*? are: (.*?)(?:\.(?!\s*[A-Za-z])|\s+The|\s*$)",
-                r"reporting contraction in .*? — in the following order — are: (.*?)\.",
-                r"reporting contraction.*?:(.*?)(?=\.|\n\n|The |INDUSTRIES)",
-            ]
-        
-        for pat in patterns:
-            match = re.search(pat, src, re.DOTALL | re.IGNORECASE)
-            if match:
-                raw = match.group(1).replace(" and ", "; ").replace("&", "and")
-                items = [x.strip().strip('.').strip() for x in re.split(r';\s*|\s+and\s+', raw) if len(x.strip()) > 3]
-                return items
-        return []
+    # === EXTREMELY FLEXIBLE SEARCH FOR GROWTH / CONTRACTION LISTS ===
+    # First, find the section containing the lists
+    section_match = re.search(
+        r"(?:The \d+ manufacturing industries reporting|industries reporting growth|reporting growth in)(.*?)(?:The \d+ manufacturing industries reporting contraction|reporting contraction|MANUFACTURING AT A GLANCE|The Institute for Supply Management)",
+        text, re.DOTALL | re.IGNORECASE
+    )
 
-    # === UPDATED CALLS (this is what you were asking about) ===
-    growth = get_list("growth", text)
-    contr = get_list("contraction", text)
-    
+    growth = []
+    contr = []
+
+    if section_match:
+        section = section_match.group(1)
+        st.info(f"DEBUG: Found growth/contraction section of length {len(section)} characters")
+
+        # Try multiple ways to split the lists
+        growth_match = re.search(r"growth.*?:(.*?)(?:contraction|The \d+|\.$)", section, re.DOTALL | re.IGNORECASE)
+        if growth_match:
+            raw = growth_match.group(1)
+            growth = [x.strip().strip('.') for x in re.split(r'[;\n]', raw) if len(x.strip()) > 4]
+
+        contr_match = re.search(r"contraction.*?:(.*?)(?:The \d+|\.$)", section, re.DOTALL | re.IGNORECASE)
+        if contr_match:
+            raw = contr_match.group(1)
+            contr = [x.strip().strip('.') for x in re.split(r'[;\n]', raw) if len(x.strip()) > 4]
+
+    else:
+        st.warning("DEBUG: Could not locate the growth/contraction section at all")
+
+    # Fallback: old patterns if above failed
+    if not growth and not contr:
+        st.warning("DEBUG: Using fallback regex patterns")
+        # (your previous patterns can stay here if you want)
+
     comments = get_respondent_comments(text)
     subcomponents = parse_ism_subcomponents(text)
+
+    # Show debug info in the app
+    st.caption(f"**Debug Info** — Growth industries found: {len(growth)} | Contraction: {len(contr)}")
+    if growth:
+        st.caption(f"Growth: {growth[:8]}...")
+    if contr:
+        st.caption(f"Contraction: {contr[:8]}...")
+
     return pmi, month_year, growth, contr, comments, subcomponents
 
 @st.cache_data(ttl=86400)
