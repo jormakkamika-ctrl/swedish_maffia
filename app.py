@@ -600,23 +600,42 @@ def show_stock_deep_dive(ticker: str):
                 row_heights=[0.68, 0.32],
                 subplot_titles=(f"{ticker} — 1Y Price", "MACD (12, 26, 9)")
             )
+
+            # Price chart
             fig.add_trace(go.Scatter(
                 x=hist.index, y=hist['Close'], name="Close",
                 line=dict(color="#58a6ff", width=2),
                 fill="tozeroy", fillcolor="rgba(88,166,255,0.06)"
             ), row=1, col=1)
+
+            # MACD traces
             fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#f0883e", width=1.5)), row=2, col=1)
             fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#3fb950", width=1.5)), row=2, col=1)
             fig.add_trace(go.Bar(
                 x=hist.index, y=histo, name="Histogram",
                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")
             ), row=2, col=1)
-            fig.update_layout(height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                              **PLOTLY_THEME)
+
+            # === SYNCHRONIZED CROSSHAIR / HOVER ===
+            fig.update_layout(
+                height=520,
+                hovermode="x unified",          # ← This is the key line
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                **PLOTLY_THEME
+            )
+
             fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
             fig.update_yaxes(title_text="MACD", row=2, col=1)
+
+            # Nicer hover tooltip
+            fig.update_traces(
+                hovertemplate="<b>%{x|%b %d, %Y}</b><br>" +
+                              "%{y:.2f}<extra></extra>"
+            )
+
             st.plotly_chart(fig, use_container_width=True)
 
+        # === Rest of the metrics table stays exactly the same ===
         price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
         mc = info.get("marketCap") or 0
         eps0 = info.get("trailingEps")
