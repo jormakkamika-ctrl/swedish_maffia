@@ -746,36 +746,40 @@ def get_full_stock_universe():
         return pd.DataFrame()
 
 def parse_report_text(text: str):
-    """Robust parser for current PR Newswire ISM format (April 2026)."""
+    """Final robust parser for current PR Newswire ISM reports."""
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 50.0
 
     month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
     month_year = month_match.group(0) if month_match else "Unknown"
 
-    # Extremely tolerant extraction for growth and contraction lists
+    # Extremely tolerant extraction
     growth = []
     contr = []
 
-    # Try several patterns that appear in recent reports
+    # Try to find the growth list
     growth_match = re.search(
-        r"(?:The \d+ manufacturing industries reporting growth|industries reporting growth|reporting growth in).*?are:(.*?)(?:The \d+|reporting contraction|MANUFACTURING AT A GLANCE|$)",
+        r"(?:The \d+ manufacturing industries reporting growth|industries reporting growth|reporting growth in).*?are:(.*?)(?:The \d+ manufacturing industries reporting contraction|reporting contraction|MANUFACTURING AT A GLANCE|$)",
         text, re.DOTALL | re.IGNORECASE
     )
     if growth_match:
         raw = growth_match.group(1)
+        # Clean and split
+        raw = raw.replace(" and ", "; ").replace("&", "and")
         growth = [x.strip().strip('.') for x in re.split(r'[;\n]', raw) if len(x.strip()) > 3]
 
+    # Try to find the contraction list
     contr_match = re.search(
         r"(?:The \d+ .*?industries reporting contraction|industries reporting contraction|reporting contraction in).*?are:(.*?)(?:The \d+|MANUFACTURING AT A GLANCE|$)",
         text, re.DOTALL | re.IGNORECASE
     )
     if contr_match:
         raw = contr_match.group(1)
+        raw = raw.replace(" and ", "; ").replace("&", "and")
         contr = [x.strip().strip('.') for x in re.split(r'[;\n]', raw) if len(x.strip()) > 3]
 
-    # Debug output so we can see exactly what was captured
-    st.caption(f"**Parser Debug** — Growth industries found: {len(growth)} | Contraction: {len(contr)}")
+    # Debug output
+    st.caption(f"**Parser Debug** — Growth: {len(growth)} | Contraction: {len(contr)}")
     if growth:
         st.caption(f"Growth: {growth}")
     if contr:
@@ -813,21 +817,34 @@ def build_historical_dataset():
                     pmi, m_year, growth, contr, comments, subcomponents = parse_report_text(raw_text)
                     if m_year == "Unknown":
                         continue
+
                     date_obj = pd.to_datetime(m_year)
                     report_metadata[date_obj] = {"comments": comments, "pmi": pmi, "subcomponents": subcomponents, "url": full_url}
                     log_messages.append(f"Parsed: {m_year} | PMI={pmi}")
-                    n_g, n_c = len(growth), len(contr)
+
+                    # === FIXED SCORING LOGIC (Gemini suggestion) ===
+                    # Filter to only valid industries before calculating n_g / n_c
+                    valid_growth = [NORM_TO_OFFICIAL[normalize_name(s)] for s in growth 
+                                    if normalize_name(s) in NORM_TO_OFFICIAL]
+                    valid_contr = [NORM_TO_OFFICIAL[normalize_name(s)] for s in contr 
+                                   if normalize_name(s) in NORM_TO_OFFICIAL]
+
+                    n_g = len(valid_growth)
+                    n_c = len(valid_contr)
+
                     month_scores = {ind: 0 for ind in INDUSTRIES}
-                    for i, s in enumerate(growth):
-                        norm = normalize_name(s)
-                        if norm in NORM_TO_OFFICIAL:
-                            month_scores[NORM_TO_OFFICIAL[norm]] = n_g - i
-                    for i, s in enumerate(contr):
-                        norm = normalize_name(s)
-                        if norm in NORM_TO_OFFICIAL:
-                            month_scores[NORM_TO_OFFICIAL[norm]] = -(n_c - i)
+
+                    # Score growth (highest = +n_g, lowest = +1)
+                    for i, industry_name in enumerate(valid_growth):
+                        month_scores[industry_name] = n_g - i
+
+                    # Score contraction (highest contraction = -n_c, lowest = -1)
+                    for i, industry_name in enumerate(valid_contr):
+                        month_scores[industry_name] = -(n_c - i)
+
                     for ind, score in month_scores.items():
                         all_data.append({"date": date_obj, "industry": ind, "score": score, "pmi": pmi, "url": full_url})
+
                 except Exception as e:
                     log_messages.append(f"Failed to parse {url}: {str(e)[:60]}")
                     continue
@@ -840,6 +857,7 @@ def build_historical_dataset():
     df = pd.DataFrame(all_data)
     if df.empty:
         return pd.DataFrame(columns=["date", "industry", "score", "pmi", "url"]), {}, log_messages
+
     df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)
     num_unique_dates = df['date'].nunique() if 'date' in df.columns and not df.empty else 0
     log_messages.append(f"Total records: {len(df)} across {num_unique_dates} reports.")
