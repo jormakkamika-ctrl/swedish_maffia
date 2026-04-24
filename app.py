@@ -683,18 +683,15 @@ def normalize_name(name: str) -> str:
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 # ====================== ROBUST INDUSTRY LIST PARSER ======================
-# ====================== ROBUST INDUSTRY LIST PARSER (FINAL - FIXED) ======================
+# ====================== ROBUST INDUSTRY LIST PARSER (HYBRID + DEBUG) ======================
 def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
-    """Final robust extractor for ISM growing + contracting industries.
-    Tight sentence-boundary capture to prevent over-matching from the rest of the report."""
+    """Hybrid parser: sentence capture + position fallback. Works on scraped + clean text."""
     
-    # Growth section - stops at the very first period after "are:"
+    # === PRIMARY: Sentence-based capture (most reliable on clean lists) ===
     growth_match = re.search(
         r'reporting growth[^:]*?are:?\s*([^.]+?)\.',
         text, re.DOTALL | re.IGNORECASE
     )
-    
-    # Contraction section - same tight capture
     contr_match = re.search(
         r'reporting contraction[^:]*?are:?\s*([^.]+?)\.',
         text, re.DOTALL | re.IGNORECASE
@@ -702,6 +699,9 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
     
     growth_section = growth_match.group(1).strip() if growth_match else ""
     contr_section = contr_match.group(1).strip() if contr_match else ""
+    
+    print(f"DEBUG - Growth section captured: {len(growth_section)} chars")
+    print(f"DEBUG - Contraction section captured: {len(contr_section)} chars")
     
     def extract_from_section(section_text: str) -> list[str]:
         if not section_text:
@@ -712,12 +712,36 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
             if norm_ind in norm_section:
                 pos = norm_section.find(norm_ind)
                 found.append((official, pos))
-        # Preserve exact order of mention (this creates the correct +13 / -3 scoring)
         found.sort(key=lambda x: x[1])
         return [item[0] for item in found]
     
     growth = extract_from_section(growth_section)
     contraction = extract_from_section(contr_section)
+    
+    # === FALLBACK: Position-based (used if primary method found almost nothing) ===
+    if len(growth) + len(contraction) < 10:  # less than half the industries → something went wrong
+        print("WARNING: Primary capture weak → using position-based fallback")
+        growth_start = text.lower().find("reporting growth")
+        contr_start = text.lower().find("reporting contraction")
+        
+        found = []
+        norm_text = normalize_name(text)
+        for norm_ind, official in NORM_TO_OFFICIAL.items():
+            pos = norm_text.find(norm_ind)
+            if pos != -1:
+                if growth_start != -1 and contr_start != -1:
+                    if growth_start < pos < contr_start:
+                        found.append((official, pos, "growth"))
+                    elif pos > contr_start:
+                        found.append((official, pos, "contraction"))
+                else:
+                    found.append((official, pos, "growth"))
+        
+        growth = [item[0] for item in sorted([x for x in found if x[2] == "growth"], key=lambda x: x[1])]
+        contraction = [item[0] for item in sorted([x for x in found if x[2] == "contraction"], key=lambda x: x[1])]
+    
+    print(f"FINAL DEBUG Growth ({len(growth)}): {growth}")
+    print(f"FINAL DEBUG Contraction ({len(contraction)}): {contraction}")
     
     return growth, contraction
     
