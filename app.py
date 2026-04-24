@@ -616,26 +616,40 @@ def show_stock_deep_dive(ticker: str):
                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")
             ), row=2, col=1)
 
-            # === SYNCHRONIZED CROSSHAIR / HOVER ===
+            # === SYNCHRONIZED CROSSHAIR THAT SPANS BOTH PANELS ===
             fig.update_layout(
                 height=520,
-                hovermode="x unified",          # ← This is the key line
+                hovermode="x unified",          # unified hover
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 **PLOTLY_THEME
+            )
+
+            # This is the key fix for a continuous vertical line across both subplots
+            fig.update_xaxes(
+                showspikes=True,
+                spikecolor="rgba(255,255,255,0.7)",
+                spikethickness=1,
+                spikedash="solid",
+                spikesnap="cursor",
+                spikemode="across",             # ← makes the line go through BOTH panels
+                row=1, col=1
+            )
+            fig.update_xaxes(
+                showspikes=True,
+                spikecolor="rgba(255,255,255,0.7)",
+                spikethickness=1,
+                spikedash="solid",
+                spikesnap="cursor",
+                spikemode="across",
+                row=2, col=1
             )
 
             fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
             fig.update_yaxes(title_text="MACD", row=2, col=1)
 
-            # Nicer hover tooltip
-            fig.update_traces(
-                hovertemplate="<b>%{x|%b %d, %Y}</b><br>" +
-                              "%{y:.2f}<extra></extra>"
-            )
-
             st.plotly_chart(fig, use_container_width=True)
 
-        # === Rest of the metrics table stays exactly the same ===
+        # === The rest of your metrics table stays exactly the same ===
         price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
         mc = info.get("marketCap") or 0
         eps0 = info.get("trailingEps")
