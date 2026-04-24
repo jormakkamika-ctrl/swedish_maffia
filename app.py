@@ -682,20 +682,35 @@ def normalize_name(name: str) -> str:
     return re.sub(r'\s+', ' ', name)
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
+# ====================== ROBUST INDUSTRY LIST PARSER ======================
 def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
-    """Robust extraction of growing + contracting industries using known list + position ordering."""
-    # Broader, more flexible section extractors
-    growth_match = re.search(
-        r'reporting growth[^.]*?are:\s*(.*?)(?=\.\s*(?:The \d+|\Z|reporting contraction|The \w+ industries))',
-        text, re.DOTALL | re.IGNORECASE
-    )
-    contr_match = re.search(
-        r'reporting contraction[^.]*?are:\s*(.*?)(?=\.\s*(?:The \d+|\Z|reporting growth|The \w+ industries))',
-        text, re.DOTALL | re.IGNORECASE
-    )
+    """Ultra-robust extractor for ISM growing + contracting industries.
+    Specifically targets the main 'manufacturing industries reporting growth' list."""
     
-    growth_section = growth_match.group(1) if growth_match else ""
-    contr_section = contr_match.group(1) if contr_match else ""
+    # Growth list - two fallback patterns to handle all recent ISM formats
+    growth_match = re.search(
+        r'The \d+ manufacturing industries reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\.\s*reporting contraction|\.\s*The three|\Z)',
+        text, re.DOTALL | re.IGNORECASE
+    )
+    if not growth_match:
+        growth_match = re.search(
+            r'reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+ industries reporting contraction|\.\s*reporting contraction|\Z)',
+            text, re.DOTALL | re.IGNORECASE
+        )
+    
+    # Contraction list
+    contr_match = re.search(
+        r'(?:The \d+|\d+)\s*(?:manufacturing )?industries reporting contraction[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\Z)',
+        text, re.DOTALL | re.IGNORECASE
+    )
+    if not contr_match:
+        contr_match = re.search(
+            r'reporting contraction[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\Z)',
+            text, re.DOTALL | re.IGNORECASE
+        )
+    
+    growth_section = growth_match.group(1).strip() if growth_match else ""
+    contr_section = contr_match.group(1).strip() if contr_match else ""
     
     def extract_from_section(section_text: str) -> list[str]:
         if not section_text:
@@ -704,28 +719,17 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
         norm_section = normalize_name(section_text)
         for norm_ind, official in NORM_TO_OFFICIAL.items():
             if norm_ind in norm_section:
-                # Get position for ordering (preserves "listed in order")
                 pos = norm_section.find(norm_ind)
                 found.append((official, pos))
-        # Sort by appearance order in the report
+        # Preserve exact order of appearance (this is what creates the +13, +12, ... scoring)
         found.sort(key=lambda x: x[1])
         return [item[0] for item in found]
     
     growth = extract_from_section(growth_section)
     contraction = extract_from_section(contr_section)
     
-    # Optional fallback: global search (very rare)
-    if not growth and not contraction:
-        norm_text = normalize_name(text)
-        found_all = []
-        for norm_ind, official in NORM_TO_OFFICIAL.items():
-            if norm_ind in norm_text:
-                pos = norm_text.find(norm_ind)
-                found_all.append((official, pos))
-        found_all.sort(key=lambda x: x[1])
-        # You could split into growth/contraction here if needed, but section extraction has been reliable
-    
     return growth, contraction
+    
 def get_respondent_comments(text: str) -> list:
     patterns = [
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management|©|ISM® Reports|Report Issued|$))",
@@ -797,7 +801,12 @@ def parse_report_text(text: str):
     
 
     # === UPDATED CALLS (this is what you were asking about) ===
+        # === ROBUST INDUSTRY LIST EXTRACTION (UPDATED) ===
     growth, contr = get_industry_lists(text)
+    
+    # Temporary debug (you'll see this in the terminal when you run "Deep Refresh")
+    print(f"DEBUG - Growth industries ({len(growth)}): {growth}")
+    print(f"DEBUG - Contraction industries ({len(contr)}): {contr}")
     
     comments = get_respondent_comments(text)
     subcomponents = parse_ism_subcomponents(text)
