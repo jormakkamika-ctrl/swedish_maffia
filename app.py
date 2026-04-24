@@ -683,40 +683,41 @@ def normalize_name(name: str) -> str:
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 # ====================== ROBUST INDUSTRY LIST PARSER ======================
-# ====================== ROBUST INDUSTRY LIST PARSER (FINAL) ======================
 # ====================== ROBUST INDUSTRY LIST PARSER (FINAL - FIXED) ======================
-# ====================== ROBUST INDUSTRY LIST PARSER (POSITION-BASED - FINAL) ======================
 def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
-    """Ultra-robust, position-based parser that works on both clean text and scraped HTML text.
-    Handles January, March, and all future variations perfectly."""
+    """Final robust extractor for ISM growing + contracting industries.
+    Tight sentence-boundary capture to prevent over-matching from the rest of the report."""
     
-    # Find the key phrases to determine which section each industry belongs to
-    growth_start = text.lower().find("reporting growth")
-    contr_start = text.lower().find("reporting contraction")
+    # Growth section - stops at the very first period after "are:"
+    growth_match = re.search(
+        r'reporting growth[^:]*?are:?\s*([^.]+?)\.',
+        text, re.DOTALL | re.IGNORECASE
+    )
     
-    growth = []
-    contraction = []
-    found = []
+    # Contraction section - same tight capture
+    contr_match = re.search(
+        r'reporting contraction[^:]*?are:?\s*([^.]+?)\.',
+        text, re.DOTALL | re.IGNORECASE
+    )
     
-    norm_text = normalize_name(text)
+    growth_section = growth_match.group(1).strip() if growth_match else ""
+    contr_section = contr_match.group(1).strip() if contr_match else ""
     
-    for norm_ind, official in NORM_TO_OFFICIAL.items():
-        pos = norm_text.find(norm_ind)
-        if pos != -1:
-            # Determine which section this industry belongs to
-            if growth_start != -1 and contr_start != -1:
-                # Industry appears after "growth" but before "contraction" → growth list
-                if growth_start < pos < contr_start:
-                    found.append((official, pos, "growth"))
-                elif pos > contr_start:
-                    found.append((official, pos, "contraction"))
-            else:
-                # Fallback if one phrase is missing
-                found.append((official, pos, "growth" if "growth" in norm_text[:pos+50] else "contraction"))
+    def extract_from_section(section_text: str) -> list[str]:
+        if not section_text:
+            return []
+        found = []
+        norm_section = normalize_name(section_text)
+        for norm_ind, official in NORM_TO_OFFICIAL.items():
+            if norm_ind in norm_section:
+                pos = norm_section.find(norm_ind)
+                found.append((official, pos))
+        # Preserve exact order of mention (this creates the correct +13 / -3 scoring)
+        found.sort(key=lambda x: x[1])
+        return [item[0] for item in found]
     
-    # Group and sort by appearance order within each list
-    growth = [item[0] for item in sorted([x for x in found if x[2] == "growth"], key=lambda x: x[1])]
-    contraction = [item[0] for item in sorted([x for x in found if x[2] == "contraction"], key=lambda x: x[1])]
+    growth = extract_from_section(growth_section)
+    contraction = extract_from_section(contr_section)
     
     return growth, contraction
     
