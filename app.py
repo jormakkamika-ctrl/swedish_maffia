@@ -682,7 +682,50 @@ def normalize_name(name: str) -> str:
     return re.sub(r'\s+', ' ', name)
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
-
+def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
+    """Robust extraction of growing + contracting industries using known list + position ordering."""
+    # Broader, more flexible section extractors
+    growth_match = re.search(
+        r'reporting growth[^.]*?are:\s*(.*?)(?=\.\s*(?:The \d+|\Z|reporting contraction|The \w+ industries))',
+        text, re.DOTALL | re.IGNORECASE
+    )
+    contr_match = re.search(
+        r'reporting contraction[^.]*?are:\s*(.*?)(?=\.\s*(?:The \d+|\Z|reporting growth|The \w+ industries))',
+        text, re.DOTALL | re.IGNORECASE
+    )
+    
+    growth_section = growth_match.group(1) if growth_match else ""
+    contr_section = contr_match.group(1) if contr_match else ""
+    
+    def extract_from_section(section_text: str) -> list[str]:
+        if not section_text:
+            return []
+        found = []
+        norm_section = normalize_name(section_text)
+        for norm_ind, official in NORM_TO_OFFICIAL.items():
+            if norm_ind in norm_section:
+                # Get position for ordering (preserves "listed in order")
+                pos = norm_section.find(norm_ind)
+                found.append((official, pos))
+        # Sort by appearance order in the report
+        found.sort(key=lambda x: x[1])
+        return [item[0] for item in found]
+    
+    growth = extract_from_section(growth_section)
+    contraction = extract_from_section(contr_section)
+    
+    # Optional fallback: global search (very rare)
+    if not growth and not contraction:
+        norm_text = normalize_name(text)
+        found_all = []
+        for norm_ind, official in NORM_TO_OFFICIAL.items():
+            if norm_ind in norm_text:
+                pos = norm_text.find(norm_ind)
+                found_all.append((official, pos))
+        found_all.sort(key=lambda x: x[1])
+        # You could split into growth/contraction here if needed, but section extraction has been reliable
+    
+    return growth, contraction
 def get_respondent_comments(text: str) -> list:
     patterns = [
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management|©|ISM® Reports|Report Issued|$))",
@@ -746,55 +789,18 @@ def get_full_stock_universe():
         return pd.DataFrame()
 
 def parse_report_text(text: str):
-    """Robust parser using Gemini's improved get_list (handles current PR Newswire format)."""
     pmi_match = re.search(r"at (\d+\.\d+)%", text)
     pmi = float(pmi_match.group(1)) if pmi_match else 50.0
-
     month_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}", text)
     month_year = month_match.group(0) if month_match else "Unknown"
 
-    def get_list(pattern_type: str, src: str) -> list:
-        """Improved extractor: Handles January variations and avoids breaking '&' names."""
-        if pattern_type == "growth":
-            patterns = [
-                r"reporting growth in .*? — (?:listed in order|in the following order) — are:(.*?)(?:\. [A-Z]|\n\n|The \d+ industries|MANUFACTURING AT A GLANCE)",
-                r"The \d+ manufacturing industries reporting growth .*? are:(.*?)(?:\.(?!\s*[A-Za-z])|\s+The|\s*$)",
-            ]
-        else:  # contraction
-            patterns = [
-                r"reporting contraction in .*? — (?:listed in order|in the following order) — are:(.*?)(?:\. [A-Z]|\n\n|The \d+ industries|MANUFACTURING AT A GLANCE)",
-                r"The \d+ .*?industries reporting contraction .*? are:(.*?)(?:\.(?!\s*[A-Za-z])|\s+The|\s*$)",
-            ]
-        
-        for pat in patterns:
-            match = re.search(pat, src, re.DOTALL | re.IGNORECASE)
-            if match:
-                raw = match.group(1)
-                # Split ONLY on semicolons or newlines to preserve industry names
-                items = [x.strip() for x in re.split(r'[;\n]', raw)]
-                
-                cleaned_items = []
-                for item in items:
-                    # Remove leading 'and ' or 'the ' from the last list item
-                    item = re.sub(r'^(and|the)\s+', '', item, flags=re.IGNORECASE).strip().strip('.')
-                    if len(item) > 3:
-                        cleaned_items.append(item)
-                return cleaned_items
-        return []
+    
 
-    growth = get_list("growth", text)
-    contr = get_list("contraction", text)
-
-    # Debug output (you can remove later)
-    st.caption(f"**Parser Debug** — Growth: {len(growth)} | Contraction: {len(contr)}")
-    if growth:
-        st.caption(f"Growth: {growth}")
-    if contr:
-        st.caption(f"Contraction: {contr}")
-
+    # === UPDATED CALLS (this is what you were asking about) ===
+    growth, contr = get_industry_lists(text)
+    
     comments = get_respondent_comments(text)
     subcomponents = parse_ism_subcomponents(text)
-
     return pmi, month_year, growth, contr, comments, subcomponents
 
 @st.cache_data(ttl=86400)
@@ -824,34 +830,21 @@ def build_historical_dataset():
                     pmi, m_year, growth, contr, comments, subcomponents = parse_report_text(raw_text)
                     if m_year == "Unknown":
                         continue
-
                     date_obj = pd.to_datetime(m_year)
                     report_metadata[date_obj] = {"comments": comments, "pmi": pmi, "subcomponents": subcomponents, "url": full_url}
                     log_messages.append(f"Parsed: {m_year} | PMI={pmi}")
-
-                    # === FIXED SCORING LOGIC (Gemini suggestion) ===
-                    # Filter to only valid industries BEFORE calculating n_g / n_c
-                    valid_growth = [NORM_TO_OFFICIAL[normalize_name(s)] for s in growth 
-                                    if normalize_name(s) in NORM_TO_OFFICIAL]
-                    valid_contr = [NORM_TO_OFFICIAL[normalize_name(s)] for s in contr 
-                                   if normalize_name(s) in NORM_TO_OFFICIAL]
-
-                    n_g = len(valid_growth)
-                    n_c = len(valid_contr)
-
+                    n_g, n_c = len(growth), len(contr)
                     month_scores = {ind: 0 for ind in INDUSTRIES}
-
-                    # Score growth (highest = +n_g, lowest = +1)
-                    for i, industry_name in enumerate(valid_growth):
-                        month_scores[industry_name] = n_g - i
-
-                    # Score contraction (highest contraction = -n_c, lowest = -1)
-                    for i, industry_name in enumerate(valid_contr):
-                        month_scores[industry_name] = -(n_c - i)
-
+                    for i, s in enumerate(growth):
+                        norm = normalize_name(s)
+                        if norm in NORM_TO_OFFICIAL:
+                            month_scores[NORM_TO_OFFICIAL[norm]] = n_g - i
+                    for i, s in enumerate(contr):
+                        norm = normalize_name(s)
+                        if norm in NORM_TO_OFFICIAL:
+                            month_scores[NORM_TO_OFFICIAL[norm]] = -(n_c - i)
                     for ind, score in month_scores.items():
                         all_data.append({"date": date_obj, "industry": ind, "score": score, "pmi": pmi, "url": full_url})
-
                 except Exception as e:
                     log_messages.append(f"Failed to parse {url}: {str(e)[:60]}")
                     continue
@@ -864,7 +857,6 @@ def build_historical_dataset():
     df = pd.DataFrame(all_data)
     if df.empty:
         return pd.DataFrame(columns=["date", "industry", "score", "pmi", "url"]), {}, log_messages
-
     df = df.drop_duplicates(subset=['date', 'industry'], keep='last').reset_index(drop=True)
     num_unique_dates = df['date'].nunique() if 'date' in df.columns and not df.empty else 0
     log_messages.append(f"Total records: {len(df)} across {num_unique_dates} reports.")
@@ -1448,3 +1440,4 @@ with st.sidebar:
                 st.markdown(f"`{msg}`")
         else:
             st.caption("No log entries.")
+
