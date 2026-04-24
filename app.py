@@ -684,24 +684,20 @@ def normalize_name(name: str) -> str:
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 # ====================== ROBUST INDUSTRY LIST PARSER ======================
 # ====================== ROBUST INDUSTRY LIST PARSER (FINAL) ======================
+# ====================== ROBUST INDUSTRY LIST PARSER (FINAL - FIXED) ======================
 def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
-    """Ultra-robust extractor for ISM growing + contracting industries.
-    Tested on March 2026 + January reports."""
+    """Final robust extractor for ISM growing + contracting industries.
+    Tight sentence-boundary capture to prevent over-matching from the rest of the report."""
     
-    # === GROWTH SECTION ===
+    # Growth section - stops at the very first period after "are:"
     growth_match = re.search(
-        r'The \d+ manufacturing industries reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\.\s*reporting contraction|\.\s*The three|\Z)',
+        r'reporting growth[^:]*?are:?\s*([^.]+?)\.',
         text, re.DOTALL | re.IGNORECASE
     )
-    if not growth_match:
-        growth_match = re.search(
-            r'reporting growth[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\.\s*reporting contraction|\Z)',
-            text, re.DOTALL | re.IGNORECASE
-        )
     
-    # === CONTRACTION SECTION (fixed for March phrasing) ===
+    # Contraction section - same tight capture
     contr_match = re.search(
-        r'reporting contraction[^:]*?are:?\s*(.+?)(?=\.\s*The \d+|\Z)',
+        r'reporting contraction[^:]*?are:?\s*([^.]+?)\.',
         text, re.DOTALL | re.IGNORECASE
     )
     
@@ -717,7 +713,7 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
             if norm_ind in norm_section:
                 pos = norm_section.find(norm_ind)
                 found.append((official, pos))
-        # Preserve exact order → correct +13 / -3 scoring
+        # Preserve exact order of mention (this creates the correct +13 / -3 scoring)
         found.sort(key=lambda x: x[1])
         return [item[0] for item in found]
     
