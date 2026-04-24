@@ -683,17 +683,15 @@ def normalize_name(name: str) -> str:
 
 NORM_TO_OFFICIAL = {normalize_name(ind): ind for ind in INDUSTRIES}
 # ====================== ROBUST INDUSTRY LIST PARSER ======================
-# ====================== ROBUST INDUSTRY LIST PARSER (SHORT + FINAL) ======================
+# ====================== ROBUST INDUSTRY LIST PARSER (HYBRID + DEBUG) ======================
 def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
-    """Short, tight sentence capture. Works on both March and January (and all other reports)."""
+    """Hybrid parser: sentence capture + position fallback. Works on scraped + clean text."""
     
-    # Growth list capture
+    # === PRIMARY: Sentence-based capture (most reliable on clean lists) ===
     growth_match = re.search(
         r'reporting growth[^:]*?are:?\s*([^.]+?)\.',
         text, re.DOTALL | re.IGNORECASE
     )
-    
-    # Contraction list capture (handles "— in the following order —" phrasing)
     contr_match = re.search(
         r'reporting contraction[^:]*?are:?\s*([^.]+?)\.',
         text, re.DOTALL | re.IGNORECASE
@@ -701,6 +699,9 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
     
     growth_section = growth_match.group(1).strip() if growth_match else ""
     contr_section = contr_match.group(1).strip() if contr_match else ""
+    
+    print(f"DEBUG - Growth section captured: {len(growth_section)} chars")
+    print(f"DEBUG - Contraction section captured: {len(contr_section)} chars")
     
     def extract_from_section(section_text: str) -> list[str]:
         if not section_text:
@@ -717,42 +718,39 @@ def get_industry_lists(text: str) -> tuple[list[str], list[str]]:
     growth = extract_from_section(growth_section)
     contraction = extract_from_section(contr_section)
     
-    # Debug output (visible in Process Log)
+    # === FALLBACK: Position-based (used if primary method found almost nothing) ===
+    if len(growth) + len(contraction) < 10:  # less than half the industries → something went wrong
+        print("WARNING: Primary capture weak → using position-based fallback")
+        growth_start = text.lower().find("reporting growth")
+        contr_start = text.lower().find("reporting contraction")
+        
+        found = []
+        norm_text = normalize_name(text)
+        for norm_ind, official in NORM_TO_OFFICIAL.items():
+            pos = norm_text.find(norm_ind)
+            if pos != -1:
+                if growth_start != -1 and contr_start != -1:
+                    if growth_start < pos < contr_start:
+                        found.append((official, pos, "growth"))
+                    elif pos > contr_start:
+                        found.append((official, pos, "contraction"))
+                else:
+                    found.append((official, pos, "growth"))
+        
+        growth = [item[0] for item in sorted([x for x in found if x[2] == "growth"], key=lambda x: x[1])]
+        contraction = [item[0] for item in sorted([x for x in found if x[2] == "contraction"], key=lambda x: x[1])]
+    
     print(f"FINAL DEBUG Growth ({len(growth)}): {growth}")
     print(f"FINAL DEBUG Contraction ({len(contraction)}): {contraction}")
     
     return growth, contraction
     
 def get_respondent_comments(text: str) -> list:
-    """Handles January's **WHAT RESPONDENTS ARE SAYING** and bullet format."""
     patterns = [
-        r"\*\*WHAT RESPONDENTS ARE SAYING\*\*\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management|©|ISM® Reports|Report Issued|$))",
         r"WHAT RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management|©|ISM® Reports|Report Issued|$))",
         r"RESPONDENTS ARE SAYING\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|The Institute for Supply Management))",
         r"COMMENTS FROM RESPONDENTS\s*(.*?)(?=\s*(?:MANUFACTURING AT A GLANCE|$))",
     ]
-    
-    section = ""
-    for pattern in patterns:
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        if match:
-            section = match.group(1).strip()
-            break
-    if not section:
-        return []
-    
-    bullet_pattern = r'(?:^|\n)[\s\u2022\-\*]+\s*"?(.+?)"?\s*(?:\[\s*(.+?)\s*\])?'
-    bullets = re.findall(bullet_pattern, section, re.MULTILINE | re.DOTALL)
-    
-    comments = []
-    for quote, industry in bullets:
-        quote = quote.strip()
-        if len(quote) > 15:
-            comment = f"- {quote}"
-            if industry and industry.strip():
-                comment += f" [{industry.strip()}]"
-            comments.append(comment)
-    return comments
     section = ""
     for pattern in patterns:
         match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
@@ -1467,4 +1465,6 @@ with st.sidebar:
                 st.markdown(f"`{msg}`")
         else:
             st.caption("No log entries.")
+
+
 
