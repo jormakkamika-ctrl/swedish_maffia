@@ -596,10 +596,10 @@ def show_stock_deep_dive(ticker: str):
             macd, signal, histo = calculate_macd(hist)
             from plotly.subplots import make_subplots
             
-            # 1. Reduce vertical_spacing to make the line look connected
+            # 1. Ensure shared_xaxes is True
             fig = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-                row_heights=[0.7, 0.3],
+                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+                row_heights=[0.68, 0.32],
                 subplot_titles=(f"{ticker} — 1Y Price", "MACD (12, 26, 9)")
             )
 
@@ -618,32 +618,45 @@ def show_stock_deep_dive(ticker: str):
                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")
             ), row=2, col=1)
 
-            # 2. Filter theme to avoid axis conflicts and set global distances
+            # 2. UPDATED LAYOUT: Use 'x' hovermode and distance settings
             fig.update_layout(
-                height=550,
-                hovermode="x unified",
-                hoverdistance=-1,   # Forces hover line to stay active
-                spikedistance=-1,  # Forces spikes to stay active
+                height=520,
+                hovermode="x",           # Allows multi-subplot synchronization
+                hoverdistance=-1,        # Ensures hover triggers across the entire width
+                spikedistance=-1,        # Ensures spikes (lines) are always visible
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                **{k: v for k, v in PLOTLY_THEME.items() if k not in ["xaxis", "yaxis"]}
+                **PLOTLY_THEME
             )
 
-            # 3. Apply unified spike settings to both axes
+            # 3. UPDATED AXES: Switch to spikesnap="data"
             fig.update_xaxes(
                 showspikes=True,
                 spikecolor="rgba(255, 255, 255, 0.6)",
                 spikethickness=1,
                 spikedash="solid",
-                spikemode="across",
-                spikesnap="data",   # Snapping to data keeps the line perfectly vertical across panels
-                matches='x',        # Ensures both plots zoom/pan/hover together
+                spikesnap="data",        # CRITICAL: Snap to data to sync across both panels
+                spikemode="across",      # Line spans the full height of the subplot
+                matches='x',             # Syncs zooming/panning
+                row=1, col=1
             )
             
-            # Specific Y-axis styling
-            fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$", gridcolor="#21262d")
-            fig.update_yaxes(title_text="MACD", row=2, col=1, gridcolor="#21262d")
+            # Apply same settings to second x-axis
+            fig.update_xaxes(
+                showspikes=True,
+                spikecolor="rgba(255, 255, 255, 0.6)",
+                spikethickness=1,
+                spikedash="solid",
+                spikesnap="data",
+                spikemode="across",
+                row=2, col=1
+            )
+
+            fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
+            fig.update_yaxes(title_text="MACD", row=2, col=1)
 
             st.plotly_chart(fig, use_container_width=True)
+
+        # ... (rest of the metrics table code remains the same)
 
         # === Metrics table (unchanged) ===
         price = info.get("currentPrice") or info.get("regularMarketPrice") or (hist['Close'].iloc[-1] if not hist.empty else None)
