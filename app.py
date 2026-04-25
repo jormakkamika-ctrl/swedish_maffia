@@ -595,8 +595,10 @@ def show_stock_deep_dive(ticker: str):
         if not hist.empty:
             macd, signal, histo = calculate_macd(hist)
             from plotly.subplots import make_subplots
+            
+            # 1. Ensure shared_xaxes is True
             fig = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
                 row_heights=[0.68, 0.32],
                 subplot_titles=(f"{ticker} — 1Y Price", "MACD (12, 26, 9)")
             )
@@ -616,26 +618,38 @@ def show_stock_deep_dive(ticker: str):
                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")
             ), row=2, col=1)
 
-            # === SYNCHRONIZED CONTINUOUS CROSSHAIR ===
+            # 2. UPDATED LAYOUT: Use 'x' hovermode and distance settings
             fig.update_layout(
                 height=520,
-                hovermode="x unified",
+                hovermode="x",           # Allows multi-subplot synchronization
+                hoverdistance=-1,        # Ensures hover triggers across the entire width
+                spikedistance=-1,        # Ensures spikes (lines) are always visible
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 **PLOTLY_THEME
             )
 
-            # This forces ONE continuous vertical line across BOTH panels
-            for row in [1, 2]:
-                fig.update_xaxes(
-                    showspikes=True,
-                    spikecolor="rgba(255, 255, 255, 0.85)",
-                    spikethickness=1.5,
-                    spikedash="solid",
-                    spikesnap="cursor",
-                    spikemode="across",      # ← key setting
-                    matches='x',             # ← forces synchronization
-                    row=row, col=1
-                )
+            # 3. UPDATED AXES: Switch to spikesnap="data"
+            fig.update_xaxes(
+                showspikes=True,
+                spikecolor="rgba(255, 255, 255, 0.6)",
+                spikethickness=1,
+                spikedash="solid",
+                spikesnap="data",        # CRITICAL: Snap to data to sync across both panels
+                spikemode="across",      # Line spans the full height of the subplot
+                matches='x',             # Syncs zooming/panning
+                row=1, col=1
+            )
+            
+            # Apply same settings to second x-axis
+            fig.update_xaxes(
+                showspikes=True,
+                spikecolor="rgba(255, 255, 255, 0.6)",
+                spikethickness=1,
+                spikedash="solid",
+                spikesnap="data",
+                spikemode="across",
+                row=2, col=1
+            )
 
             fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
             fig.update_yaxes(title_text="MACD", row=2, col=1)
