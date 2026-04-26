@@ -358,7 +358,7 @@ ETF_CATEGORY_TO_ISM: Dict[str, str] = {
 }
 
 # ====================== GICS SECTOR → ISM INDUSTRY BRIDGE (weighted) ======================
-# ====================== GICS SECTOR → ISM INDUSTRY BRIDGE ======================
+# ====================== GICS SECTOR → ISM INDUSTRY BRIDGE (Tab 1 only) ======================
 GICS_TO_ISM_BRIDGE: Dict[str, str] = {
     "Technology": "Computer & Electronic Products",
     "Industrials": "Machinery",
@@ -390,55 +390,7 @@ def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposur
             total_relevance += (weight_pct / 100.0)
 
     return total_relevance if total_relevance >= min_exposure else 0.0
-# ====================== ADVANCED ETF MAPPING (weighted sector-based) ======================
 
-# GICS Sector → ISM Industry bridge (for Primary Effect baskets in Tab 1)
-GICS_TO_ISM_BRIDGE: Dict[str, str] = {
-    "Technology": "Computer & Electronic Products",
-    "Industrials": "Machinery",                    # or Transportation Equipment / Fabricated Metal Products
-    "Materials": "Primary Metals",                 # or Chemical Products
-    "Consumer Discretionary": "Apparel, Leather & Allied Products",
-    "Consumer Staples": "Food, Beverage & Tobacco Products",
-    "Energy": "Petroleum & Coal Products",
-    "Health Care": "Miscellaneous Manufacturing",
-    "Financials": "Financial Activities",          # you can add this ISM key if you want
-    "Communication Services": "Computer & Electronic Products",  # partial overlap
-    "Utilities": "Fixed Income / Other",
-    "Real Estate": "Fixed Income / Other",
-}
-
-# GICS Sector → Driver exposure (for Tab 2 macro scoring)
-ETF_SECTOR_DRIVER_MAP: Dict[str, Dict[DriverName, float]] = {
-    "technology": {
-        DriverName.DEMAND_MOMENTUM: 0.85,
-        DriverName.CAPEX_PRESSURE: 0.65,
-    },
-    "industrials": {
-        DriverName.CAPEX_PRESSURE: 0.92,
-        DriverName.DEMAND_MOMENTUM: 0.72,
-        DriverName.INVENTORY_RESTOCKING: 0.55,
-    },
-    "materials": {
-        DriverName.INPUT_COST_INFLATION: 0.95,
-        DriverName.INVENTORY_RESTOCKING: 0.80,
-    },
-    "energy": {
-        DriverName.INPUT_COST_INFLATION: 0.88,
-        DriverName.CAPEX_PRESSURE: 0.75,
-    },
-    "financials": {
-        DriverName.SECTOR_SPECIFIC_STRENGTH: 0.85,
-    },
-    "health care": {
-        DriverName.DEMAND_MOMENTUM: 0.60,   # more defensive
-    },
-    "consumer staples": {
-        DriverName.DEMAND_MOMENTUM: 0.45,   # defensive
-    },
-    "consumer discretionary": {
-        DriverName.DEMAND_MOMENTUM: 0.78,
-    },
-}
 # ====================== ECONOMIC DRIVER CLASSES ======================
 class DriverName(str, Enum):
     DEMAND_MOMENTUM = "Demand Momentum"
