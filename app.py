@@ -1246,16 +1246,16 @@ if st.button("Generate Primary Effect Baskets for Selected Industries", type="pr
                     st.session_state.selected_type = "ETF"
 
         with col_right:
-            section_header("Selected Stock Analysis")
-ticker = st.session_state.get("selected_ticker")
-ticker_type = st.session_state.get("selected_type", "Stock")
+            section_header("Selected Stock / ETF Analysis")
+            ticker = st.session_state.get("selected_ticker")
+            ticker_type = st.session_state.get("selected_type", "Stock")
 
-if ticker:
-    if ticker_type == "ETF":
-        show_etf_deep_dive(ticker)
-    else:
-        show_stock_deep_dive(ticker)
-else:
+            if ticker:
+                if ticker_type == "ETF":
+                    show_etf_deep_dive(ticker)
+                else:
+                    show_stock_deep_dive(ticker)
+            else:
                 st.markdown("""
                 <div style="
                 background: #161b22;
@@ -1267,10 +1267,9 @@ else:
                 font-family: 'IBM Plex Mono', monospace;
                 font-size: 0.82rem;
                 ">
-                Select a stock from the baskets on the left<br>to open the professional deep dive panel.
+                Select a stock or ETF from the baskets on the left<br>to open the professional deep dive panel.
                 </div>
                 """, unsafe_allow_html=True)
-
     with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
         # Latest report comments (always shown first)
         if comments_list:
