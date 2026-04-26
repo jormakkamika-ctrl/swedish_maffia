@@ -1347,6 +1347,7 @@ if st.button("Generate Primary Effect Baskets for Selected Industries", type="pr
                        f"(stocks + weighted ETFs)")
 
     # ====================== DISPLAY BASKETS ======================
+    # ====================== DISPLAY BASKETS (Stocks + ETFs) ======================
     if "primary_baskets" in st.session_state and (st.session_state.primary_baskets.get("stocks") or st.session_state.primary_baskets.get("etfs")):
         col_left, col_right = st.columns([2, 3])
 
