@@ -1407,157 +1407,118 @@ with tab2:
         color_continuous_midpoint=0,
     )
     fig_drivers.update_traces(textfont=dict(family="IBM Plex Mono", size=11), textposition="outside")
-
-    # FIXED: Avoid duplicate 'xaxis' key conflict with PLOTLY_THEME
     fig_drivers.update_layout(
         height=320,
         coloraxis_showscale=False,
         margin=dict(l=10, r=40, t=20, b=10),
         **{k: v for k, v in PLOTLY_THEME.items() if k != "xaxis"}
     )
-    # Override xaxis separately (safe merge)
     fig_drivers.update_layout(
-        xaxis=dict(
-            range=[-1.1, 1.1],
-            zeroline=True,
-            zerolinecolor="#444c56",
-            zerolinewidth=1,
-            gridcolor="#21262d",
-            linecolor="#30363d"
-        )
+        xaxis=dict(range=[-1.1, 1.1], zeroline=True, zerolinecolor="#444c56", zerolinewidth=1,
+                   gridcolor="#21262d", linecolor="#30363d")
     )
-
     st.plotly_chart(fig_drivers, use_container_width=True)
 
     st.divider()
 
-    section_header("ISM-Leveraged Stock Ideas", "Full NYSE + NASDAQ universe | >$1B market cap | ranked by ISM signal alignment")
+    section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe (> $500M) ranked by ISM driver alignment")
 
     if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
-        with st.spinner("Scoring full universe against ISM driver vector..."):
-            stocks_df = get_full_stock_universe()
-            if not stocks_df.empty:
-                scored_df = tag_and_score_stocks(stocks_df, drivers)
+        with st.spinner("Scoring full universe (stocks + ETFs) against ISM driver vector..."):
+            universe = get_full_universe()
+            if not universe.empty:
+                # Score stocks (existing logic)
+                stocks_df = universe[universe["Type"] == "Stock"].copy()
+                scored_stocks = tag_and_score_stocks(stocks_df, drivers) if not stocks_df.empty else pd.DataFrame()
+
+                # Score ETFs using dominant sector
+                etfs_df = universe[universe["Type"] == "ETF"].copy()
+                scored_etfs = pd.DataFrame()
+                if not etfs_df.empty:
+                    etf_rows = []
+                    for _, row in etfs_df.iterrows():
+                        dominant = get_dominant_sector(row.get("Sector_Weights", ""))
+                        exposures = get_best_exposure(dominant) if dominant else {}
+                        vector = [exposures.get(d, 0.0) for d in DriverName]
+                        etf_rows.append({
+                            **row.to_dict(),
+                            **{d.value: v for d, v in zip(DriverName, vector)},
+                            "ism_score": sum(v * drivers[d].strength for d, v in zip(DriverName, vector)),
+                            "conviction": sum(v * drivers[d].strength for d, v in zip(DriverName, vector)) * 0.8,
+                            "why": "Dominant sector: " + dominant if dominant else "No sector data",
+                            "Type": "ETF"
+                        })
+                    scored_etfs = pd.DataFrame(etf_rows)
+
+                # Combine
+                scored_df = pd.concat([scored_stocks, scored_etfs], ignore_index=True)
+                if not scored_df.empty:
+                    scored_df = scored_df.sort_values("conviction", ascending=False).reset_index(drop=True)
                 st.session_state.scored_df_tab2 = scored_df
-                st.success(f"Scored {len(scored_df):,} stocks across {scored_df['Yahoo Industry'].nunique()} industries.")
+                st.success(f"Scored {len(scored_df):,} instruments ({len(scored_stocks)} stocks + {len(scored_etfs)} ETFs)")
 
     if "scored_df_tab2" in st.session_state:
         scored_df = st.session_state.scored_df_tab2
 
-        section_header("Sector Signal Treemap", "Tile area = stock count per sector | Color = avg ISM score")
-
+        section_header("Sector Signal Treemap", "Tile area = count | Color = avg ISM score")
         sector_for_treemap = (
-            scored_df.groupby("Yahoo Industry")
+            scored_df.groupby(["Type", "Yahoo Industry" if "Yahoo Industry" in scored_df.columns else "Category"])
             .agg(Avg_Score=("ism_score", "mean"), Count=("Ticker", "count"))
             .round(3)
             .reset_index()
         )
-        sector_for_treemap = sector_for_treemap[sector_for_treemap["Count"] >= 2]
-
         if not sector_for_treemap.empty:
             fig_tree = px.treemap(
                 sector_for_treemap,
-                path=["Yahoo Industry"],
+                path=["Type", "Yahoo Industry" if "Yahoo Industry" in sector_for_treemap.columns else "Category"],
                 values="Count",
                 color="Avg_Score",
                 color_continuous_scale=[[0, "#f85149"], [0.5, "#d29922"], [1, "#3fb950"]],
                 color_continuous_midpoint=0,
-                custom_data=["Avg_Score", "Count"]
             )
-            fig_tree.update_traces(
-                hovertemplate="<b>%{label}</b><br>Avg ISM Score: %{customdata[0]:.3f}<br>Stocks: %{customdata[1]}<extra></extra>",
-                textfont=dict(family="IBM Plex Sans", size=12),
-                texttemplate="<b>%{label}</b><br>%{customdata[0]:+.2f}",
-            )
-            fig_tree.update_layout(
-                height=420,
-                margin=dict(l=0, r=0, t=0, b=0),
-                paper_bgcolor="rgba(22,27,34,0.8)",
-                font=dict(family="IBM Plex Sans", color="#e6edf3"),
-                coloraxis_colorbar=dict(
-                    thickness=12, len=0.8, title="Score",
-                    tickfont=dict(family="IBM Plex Mono", size=10)
-                )
-            )
+            fig_tree.update_layout(height=420, margin=dict(l=0, r=0, t=0, b=0), **PLOTLY_THEME)
             st.plotly_chart(fig_tree, use_container_width=True)
 
         st.divider()
 
-        section_header("Sector Summary", "Aggregated ISM alignment by Yahoo Finance industry")
-        sector_summary = (
-            scored_df.groupby("Yahoo Industry")
-            .agg(Avg_Score=("ism_score", "mean"), Num_Stocks=("Ticker", "count"))
-            .round(3).sort_values("Avg_Score", ascending=False).reset_index()
-        )
-        st.dataframe(
-            sector_summary,
+        section_header("Top Ranked — Long Ideas")
+        top_df = scored_df[scored_df["ism_score"] > 0.25].head(40).copy()
+        if top_df.empty:
+            top_df = scored_df.head(30).copy()
+        top_df = top_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "Market Cap", "ism_score", "conviction", "why"]].copy()
+        top_df["Link"] = top_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
+
+        top_sel = st.dataframe(
+            top_df,
             use_container_width=True,
             hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
             column_config={
-                "Avg_Score": st.column_config.ProgressColumn(
-                    "Avg Signal",
-                    help="Mean ISM score across all stocks in sector",
-                    format="%.3f",
-                    min_value=-1.0,
-                    max_value=1.0,
-                ),
-                "Num_Stocks": st.column_config.NumberColumn("# Stocks"),
-                "Yahoo Industry": st.column_config.TextColumn("Sector"),
+                "ism_score": st.column_config.ProgressColumn("ISM Score", format="%.3f", min_value=-1.0, max_value=1.0),
+                "conviction": st.column_config.ProgressColumn("Conviction", format="%.3f", min_value=0.0, max_value=1.5),
+                "why": st.column_config.TextColumn("Rationale", width="large"),
+                "Link": st.column_config.LinkColumn("Yahoo", display_text="View"),
             }
         )
+        if top_sel["selection"]["rows"]:
+            st.session_state.selected_ticker_tab2 = top_df.iloc[top_sel["selection"]["rows"][0]]["Ticker"]
+            st.session_state.selected_type_tab2 = top_df.iloc[top_sel["selection"]["rows"][0]]["Type"]
 
         st.divider()
 
         col_left, col_right = st.columns([2, 3])
 
         with col_left:
-            section_header("Top Ranked — Long Ideas")
-            
-            # High-conviction filter (only stocks with real signal)
-            top_df = scored_df[scored_df["ism_score"] > 0.25].head(40).copy()
-            
-            if top_df.empty:
-                top_df = scored_df.head(30).copy()
-            
-            top_df = top_df[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "conviction", "why"]].copy()
-            top_df["Link"] = top_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-            
-            top_sel = st.dataframe(
-                top_df,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                column_config={
-                    "ism_score": st.column_config.ProgressColumn(
-                        "ISM Score", format="%.3f", min_value=-1.0, max_value=1.0,
-                    ),
-                    "conviction": st.column_config.ProgressColumn(
-                        "Conviction", format="%.3f", min_value=0.0, max_value=1.5,
-                        help="Score × Demand Momentum strength (higher = higher conviction)"
-                    ),
-                    "why": st.column_config.TextColumn("Rationale", width="large"),
-                    "Link": st.column_config.LinkColumn("Yahoo", display_text="View"),
-                }
-            )
-            if top_sel["selection"]["rows"]:
-                st.session_state.selected_ticker_tab2 = top_df.iloc[top_sel["selection"]["rows"][0]]["Ticker"]
-
-            st.divider()
-
+            # (the bottom ranked / short candidates section can stay the same for now — it will show both stocks and ETFs)
             section_header("Bottom Ranked — Short Candidates")
-            
-            # === IMPROVED SHORT CANDIDATES (only real negative scores) ===
             short_candidates = scored_df[scored_df["ism_score"] < -0.08].head(40).copy()
-            
             if short_candidates.empty:
-                st.info("No strong short signals in the current ISM regime (most stocks are neutral or positive). Showing lowest exposure stocks instead.")
-                bottom_df = scored_df.tail(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
+                bottom_df = scored_df.tail(30)[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "Market Cap", "ism_score", "why"]].copy()
             else:
-                bottom_df = short_candidates[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]].copy()
-            
+                bottom_df = short_candidates[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "Market Cap", "ism_score", "why"]].copy()
             bottom_df["Link"] = bottom_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-            
+
             bot_sel = st.dataframe(
                 bottom_df,
                 use_container_width=True,
@@ -1565,65 +1526,44 @@ with tab2:
                 on_select="rerun",
                 selection_mode="single-row",
                 column_config={
-                    "ism_score": st.column_config.ProgressColumn(
-                        "Signal", format="%.3f", min_value=-1.0, max_value=1.0,
-                    ),
+                    "ism_score": st.column_config.ProgressColumn("Signal", format="%.3f", min_value=-1.0, max_value=1.0),
                     "why": st.column_config.TextColumn("Rationale", width="medium"),
                     "Link": st.column_config.LinkColumn("Yahoo", display_text="View"),
                 }
             )
             if bot_sel["selection"]["rows"]:
                 st.session_state.selected_ticker_tab2 = bottom_df.iloc[bot_sel["selection"]["rows"][0]]["Ticker"]
+                st.session_state.selected_type_tab2 = bottom_df.iloc[bot_sel["selection"]["rows"][0]]["Type"]
 
         with col_right:
             ticker = st.session_state.get("selected_ticker_tab2")
+            ticker_type = st.session_state.get("selected_type_tab2", "Stock")
             if ticker:
-                show_stock_deep_dive(ticker)
+                if ticker_type == "ETF":
+                    show_etf_deep_dive(ticker)
+                else:
+                    show_stock_deep_dive(ticker)
             else:
                 st.markdown("""
-                <div style="
-                background: #161b22;
-                border: 1px dashed #30363d;
-                border-radius: 8px;
-                padding: 48px 32px;
-                text-align: center;
-                color: #8b949e;
-                font-family: 'IBM Plex Mono', monospace;
-                font-size: 0.82rem;
-                ">
-                Select a stock from the ranked lists on the left<br>to open the professional deep dive panel.
+                <div style="background: #161b22; border: 1px dashed #30363d; border-radius: 8px; padding: 48px 32px; text-align: center; color: #8b949e; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;">
+                Select an instrument from the ranked lists on the left<br>to open the professional deep dive panel.
                 </div>
                 """, unsafe_allow_html=True)
 
         st.divider()
         csv = scored_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Download Full Ranked List (CSV)",
-            csv,
-            f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv",
-            use_container_width=True
-        )
+        st.download_button("Download Full Ranked List (CSV)", csv, f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv", use_container_width=True)
 
     else:
         st.markdown("""
-        <div style="
-        background: #161b22;
-        border: 1px dashed #30363d;
-        border-radius: 8px;
-        padding: 36px 32px;
-        text-align: center;
-        color: #8b949e;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.82rem;
-        ">
-        Press the button above to score the full universe against the current ISM driver vector.
+        <div style="background: #161b22; border: 1px dashed #30363d; border-radius: 8px; padding: 36px 32px; text-align: center; color: #8b949e; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;">
+        Press the button above to score the full universe (stocks + ETFs) against the current ISM driver vector.
         </div>
         """, unsafe_allow_html=True)
 
     st.divider()
-
     section_header("Historical Backtest", "Re-run ISM scoring against any past report")
-
+    # (the rest of the historical backtest code stays exactly the same as before)
     if report_metadata:
         historical_dates = sorted(report_metadata.keys(), reverse=True)
         date_options = [d.strftime('%B %Y') for d in historical_dates]
@@ -1634,21 +1574,16 @@ with tab2:
             with st.spinner(f"Re-calculating for {selected_month_str}..."):
                 hist_meta = report_metadata[selected_date]
                 hist_drivers = calculate_drivers(hist_meta.get("subcomponents", {}))
-                stocks_df = get_full_stock_universe()
-                if not stocks_df.empty:
-                    scored_hist = tag_and_score_stocks(stocks_df.copy(), hist_drivers)
-                    st.success(f"Backtest complete for {selected_month_str}")
-                    st.dataframe(
-                        scored_hist.head(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]],
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "ism_score": st.column_config.ProgressColumn(
-                                "Signal Strength", format="%.3f", min_value=-1.0, max_value=1.0,
-                            ),
-                            "why": st.column_config.TextColumn("Rationale", width="large"),
-                        }
-                    )
+                universe = get_full_universe()
+                stocks_df = universe[universe["Type"] == "Stock"].copy()
+                scored_hist = tag_and_score_stocks(stocks_df, hist_drivers) if not stocks_df.empty else pd.DataFrame()
+                st.success(f"Backtest complete for {selected_month_str}")
+                st.dataframe(
+                    scored_hist.head(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={"ism_score": st.column_config.ProgressColumn("Signal Strength", format="%.3f", min_value=-1.0, max_value=1.0)}
+                )
 
 # ====================== SIDEBAR ======================
 with st.sidebar:
