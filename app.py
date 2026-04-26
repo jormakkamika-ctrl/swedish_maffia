@@ -754,7 +754,7 @@ def get_dominant_sector(sector_weights_json: str) -> str:
     return ""
 
 def show_etf_deep_dive(ticker: str):
-    """Full deep dive for ETFs: chart + metrics + interactive sector pie"""
+    """Full ETF deep dive: 1Y chart + MACD + metrics + interactive sector pie"""
     if not ticker:
         return
     with st.spinner(f"Loading {ticker}..."):
@@ -764,29 +764,46 @@ def show_etf_deep_dive(ticker: str):
 
         section_header(f"{ticker} — ETF Deep Dive", info.get("longName", ""))
 
-        # === 1Y CHART (same style as stocks) ===
+        # === 1. PRICE CHART + MACD (identical style to stocks) ===
         if not hist.empty:
             macd, signal, histo = calculate_macd(hist)
             from plotly.subplots import make_subplots
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
-                                row_heights=[0.68, 0.32],
-                                subplot_titles=(f"{ticker} — 1Y Price", "MACD (12, 26, 9)"))
             
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], name="Close",
-                                     line=dict(color="#58a6ff", width=2), fill="tozeroy"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#f0883e")), row=2, col=1)
-            fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#3fb950")), row=2, col=1)
-            fig.add_trace(go.Bar(x=hist.index, y=histo, name="Histogram",
-                                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")), row=2, col=1)
-            
-            fig.update_layout(height=520, hovermode="x", **PLOTLY_THEME)
+            fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+                row_heights=[0.68, 0.32],
+                subplot_titles=(f"{ticker} — 1Y Price", "MACD (12, 26, 9)")
+            )
+
+            fig.add_trace(go.Scatter(
+                x=hist.index, y=hist['Close'], name="Close",
+                line=dict(color="#58a6ff", width=2),
+                fill="tozeroy", fillcolor="rgba(88,166,255,0.06)"
+            ), row=1, col=1)
+
+            fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#f0883e", width=1.5)), row=2, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#3fb950", width=1.5)), row=2, col=1)
+            fig.add_trace(go.Bar(
+                x=hist.index, y=histo, name="Histogram",
+                marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")
+            ), row=2, col=1)
+
+            fig.update_layout(
+                height=520,
+                hovermode="x",
+                **PLOTLY_THEME
+            )
             fig.update_xaxes(showspikes=True, spikesnap="data", spikemode="across", matches='x', row=1, col=1)
             fig.update_xaxes(showspikes=True, spikesnap="data", spikemode="across", row=2, col=1)
-            st.plotly_chart(fig, use_container_width=True)
 
-        # === ETF METRICS ===
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No price history available for this ETF.")
+
+        # === 2. METRICS TABLE + SECTOR PIE CHART ===
         col1, col2 = st.columns(2)
         aum = info.get("netAssets") or info.get("totalAssets") or info.get("marketCap") or 0
+
         with col1:
             left = pd.DataFrame({
                 "Metric": ["AUM", "Category", "Expense Ratio", "1Y Return"],
@@ -794,16 +811,15 @@ def show_etf_deep_dive(ticker: str):
                     f"${aum/1e9:.1f}B" if aum else "N/A",
                     info.get("category", "N/A"),
                     f"{info.get('expenseRatio', 0)*100:.2f}%" if info.get('expenseRatio') else "N/A",
-                    f"{((hist['Close'].iloc[-1]/hist['Close'].iloc[0])-1)*100:.1f}%" if not hist.empty else "N/A"
+                    f"{((hist['Close'].iloc[-1]/hist['Close'].iloc[0])-1)*100:.1f}%" if not hist.empty and len(hist) > 1 else "N/A"
                 ]
             })
             st.dataframe(left, use_container_width=True, hide_index=True)
 
         with col2:
-            # Sector pie chart (the illustration you asked for)
+            # Sector allocation pie chart
             sector_json = ""
             try:
-                # Try to get fresh data first, fall back to universe data
                 if hasattr(t, 'funds_data') and t.funds_data is not None:
                     sw = t.funds_data.sector_weightings
                     if sw is not None and not sw.empty:
@@ -811,23 +827,26 @@ def show_etf_deep_dive(ticker: str):
             except:
                 pass
             
+            # Fallback to stored data in universe.csv
             if not sector_json:
-                # fallback to what we stored in universe.csv
                 universe = get_full_universe()
                 row = universe[universe["Ticker"] == ticker]
-                if not row.empty:
+                if not row.empty and "Sector_Weights" in row.columns:
                     sector_json = row["Sector_Weights"].iloc[0]
-            
-            if sector_json and pd.notna(sector_json) and sector_json != "":
-                weights = json.loads(sector_json)
-                if weights:
-                    df_w = pd.DataFrame(list(weights.items()), columns=["Sector", "%"]).sort_values("%", ascending=False)
-                    fig_pie = px.pie(df_w, names="Sector", values="%", title="Sector Allocation",
-                                     color_discrete_sequence=px.colors.sequential.Blues_r)
-                    fig_pie.update_traces(textinfo="percent+label", hovertemplate="%{label}<br>%{value:.1f}%")
-                    fig_pie.update_layout(**PLOTLY_THEME, height=380)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                else:
+
+            if sector_json and pd.notna(sector_json) and sector_json.strip():
+                try:
+                    weights = json.loads(sector_json)
+                    if weights:
+                        df_w = pd.DataFrame(list(weights.items()), columns=["Sector", "%"]).sort_values("%", ascending=False)
+                        fig_pie = px.pie(df_w, names="Sector", values="%", title="Sector Allocation",
+                                         color_discrete_sequence=px.colors.sequential.Blues_r)
+                        fig_pie.update_traces(textinfo="percent+label")
+                        fig_pie.update_layout(**PLOTLY_THEME, height=380)
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    else:
+                        st.info("No sector breakdown available.")
+                except:
                     st.info("No sector breakdown available.")
             else:
                 st.info("No sector breakdown available.")
