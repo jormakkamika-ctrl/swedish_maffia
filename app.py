@@ -1129,6 +1129,12 @@ subcomponents = latest_meta.get("subcomponents", {})
 tab1, tab2 = st.tabs(["Primary Effects (ISM > Sectors > Stocks)", "Fund Manager Macro Scoring (Driver Analysis)"])
 
 # ====================== TAB 1 ======================
+✅ Here is the complete, clean, ready-to-paste code for the entire Tab 1 section.
+Replace everything from the line that says:
+Python# ====================== TAB 1 ======================
+with tab1:
+all the way down to the end of the Industry Score Evolution chart (just before # ====================== TAB 2 ======================).
+Python# ====================== TAB 1 ======================
 with tab1:
     regime = "Expansion" if pmi_val >= 50 else "Contraction"
     regime_class = "pmi-expansion" if pmi_val >= 50 else "pmi-contraction"
@@ -1189,8 +1195,7 @@ with tab1:
 
     st.divider()
 
-    section_header("Primary Effect Stock Baskets", "Direct NAICS-mapped companies from your selected industries")
-
+    # ====================== GENERATE BASKETS (Stocks + ETFs) ======================
     if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
         universe = get_full_universe()
         if universe.empty:
@@ -1207,7 +1212,7 @@ with tab1:
                 score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
                 direction = "GROWTH" if score_val > 0 else "CONTRACTION"
 
-                # === STOCK BASKET (unchanged) ===
+                # STOCK BASKET
                 yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
                 stock_df = universe[(universe["Type"] == "Stock") & 
                                    (universe["Yahoo Industry"].isin(yahoo_industries))].copy()
@@ -1215,21 +1220,21 @@ with tab1:
                     stock_df = stock_df.sort_values("Market Cap", ascending=False)
                     st.session_state.primary_baskets["stocks"][industry] = {"df": stock_df, "direction": direction}
 
-                # === ETF BASKET (now safe even if Category column is missing) ===
+                # ETF BASKET
                 etf_candidates = universe[universe["Type"] == "ETF"].copy()
-                if not etf_candidates.empty and "Category" in etf_candidates.columns:
-                    # Try to match on Category
-                    etf_df = etf_candidates[etf_candidates["Category"].str.contains(
-                        industry.split()[-1], na=False, case=False
-                    )].copy()
+                etf_df = pd.DataFrame()
+                if not etf_candidates.empty:
+                    # Direct category match
+                    if "Category" in etf_candidates.columns:
+                        etf_df = etf_candidates[etf_candidates["Category"].str.contains(
+                            industry.split()[-1], na=False, case=False
+                        )].copy()
                     
-                    # Fallback to our mapping if no direct match
+                    # Fallback using ETF_CATEGORY_TO_ISM
                     if etf_df.empty and industry in ETF_CATEGORY_TO_ISM.values():
                         mapped_cats = [k for k, v in ETF_CATEGORY_TO_ISM.items() if v == industry]
                         if mapped_cats:
                             etf_df = etf_candidates[etf_candidates["Category"].isin(mapped_cats)].copy()
-                else:
-                    etf_df = pd.DataFrame()  # no ETFs or old CSV
 
                 if not etf_df.empty:
                     etf_df = etf_df.sort_values("Market Cap", ascending=False)
@@ -1237,41 +1242,60 @@ with tab1:
 
             st.success(f"Generated baskets for {len(selected_industries)} industries (stocks + ETFs)")
 
-    if "primary_baskets" in st.session_state and st.session_state.primary_baskets:
+    # ====================== DISPLAY BASKETS ======================
+    if "primary_baskets" in st.session_state and (st.session_state.primary_baskets.get("stocks") or st.session_state.primary_baskets.get("etfs")):
         col_left, col_right = st.columns([2, 3])
 
-    with col_left:
-        section_header("Industry Baskets", "Stocks + ETFs | Click any row for deep dive")
-    
-    # STOCKS
-    if st.session_state.primary_baskets.get("stocks"):
-        st.subheader("Stocks")
-        for industry, data in st.session_state.primary_baskets["stocks"].items():
-            direction_tag = data["direction"]
-            with st.expander(f"📌 {industry} [{direction_tag}] — Stocks", expanded=True):
-                df_display = data["df"][["Ticker", "Company", "Yahoo Industry", "Market Cap"]].copy()
-                df_display["Yahoo Finance"] = df_display["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-                selection = st.dataframe(df_display, use_container_width=True, hide_index=True,
-                                         on_select="rerun", selection_mode="single-row",
-                                         column_config={"Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")})
-                if selection["selection"]["rows"]:
-                    st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
-                    st.session_state.selected_type = "Stock"
+        with col_left:
+            section_header("Industry Baskets", "Stocks + ETFs | Click any row for deep dive")
+            
+            # STOCKS
+            if st.session_state.primary_baskets.get("stocks"):
+                st.subheader("Stocks")
+                for industry, data in st.session_state.primary_baskets["stocks"].items():
+                    direction_tag = data["direction"]
+                    with st.expander(f"📌 {industry} [{direction_tag}] — Stocks", expanded=True):
+                        df_display = data["df"][["Ticker", "Company", "Yahoo Industry", "Market Cap"]].copy()
+                        df_display["Yahoo Finance"] = df_display["Ticker"].apply(
+                            lambda t: f"https://finance.yahoo.com/quote/{t}"
+                        )
+                        selection = st.dataframe(
+                            df_display,
+                            use_container_width=True,
+                            hide_index=True,
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            column_config={
+                                "Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")
+                            }
+                        )
+                        if selection["selection"]["rows"]:
+                            st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
+                            st.session_state.selected_type = "Stock"
 
-    # ETFs (new section)
-    if st.session_state.primary_baskets.get("etfs"):
-        st.subheader("ETFs")
-        for industry, data in st.session_state.primary_baskets["etfs"].items():
-            direction_tag = data["direction"]
-            with st.expander(f"📌 {industry} [{direction_tag}] — ETFs", expanded=True):
-                df_display = data["df"][["Ticker", "Company", "Category", "Market Cap"]].copy()
-                df_display["Yahoo Finance"] = df_display["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-                selection = st.dataframe(df_display, use_container_width=True, hide_index=True,
-                                         on_select="rerun", selection_mode="single-row",
-                                         column_config={"Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")})
-                if selection["selection"]["rows"]:
-                    st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
-                    st.session_state.selected_type = "ETF"
+            # ETFs
+            if st.session_state.primary_baskets.get("etfs"):
+                st.subheader("ETFs")
+                for industry, data in st.session_state.primary_baskets["etfs"].items():
+                    direction_tag = data["direction"]
+                    with st.expander(f"📌 {industry} [{direction_tag}] — ETFs", expanded=True):
+                        df_display = data["df"][["Ticker", "Company", "Category", "Market Cap"]].copy()
+                        df_display["Yahoo Finance"] = df_display["Ticker"].apply(
+                            lambda t: f"https://finance.yahoo.com/quote/{t}"
+                        )
+                        selection = st.dataframe(
+                            df_display,
+                            use_container_width=True,
+                            hide_index=True,
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            column_config={
+                                "Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")
+                            }
+                        )
+                        if selection["selection"]["rows"]:
+                            st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
+                            st.session_state.selected_type = "ETF"
 
         with col_right:
             section_header("Selected Stock / ETF Analysis")
@@ -1298,8 +1322,9 @@ with tab1:
                 Select a stock or ETF from the baskets on the left<br>to open the professional deep dive panel.
                 </div>
                 """, unsafe_allow_html=True)
+
+    # ====================== RESPONDENT COMMENTS ======================
     with st.expander("Respondent Comments (What industry leaders are saying)", expanded=False):
-        # Latest report comments (always shown first)
         if comments_list:
             st.markdown(f"**Latest Report — {latest_date.strftime('%B %Y')}**")
             st.markdown("\n\n".join(comments_list))
@@ -1307,11 +1332,9 @@ with tab1:
         else:
             st.info("No respondent comments parsed for this report.")
 
-        # Historical comments (previous 6 months)
         st.subheader("Previous Months' Respondent Comments")
         historical_dates = sorted(report_metadata.keys(), reverse=True)[:6]
-
-        for d in historical_dates[1:]:   # skip the latest month (already shown above)
+        for d in historical_dates[1:]:
             meta = report_metadata[d]
             old_comments = meta.get("comments", [])
             month_title = d.strftime('%B %Y')
@@ -1321,8 +1344,9 @@ with tab1:
                 else:
                     st.info("No respondent comments available for this month.")
 
-    section_header("6-Month Sector Momentum", "Rolling ISM growth/contraction score by industry")
+    st.divider()
 
+    section_header("6-Month Sector Momentum", "Rolling ISM growth/contraction score by industry")
     pivot = df_master.pivot_table(
         index="industry", columns="date", values="score", aggfunc="last"
     ).fillna(0)
