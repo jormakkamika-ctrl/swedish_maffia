@@ -356,6 +356,55 @@ ETF_CATEGORY_TO_ISM: Dict[str, str] = {
     "Intermediate Core Bond": "Fixed Income / Other",
     "High Yield Bond": "Fixed Income / Other",
 }
+# ====================== ADVANCED ETF MAPPING (weighted sector-based) ======================
+
+# GICS Sector → ISM Industry bridge (for Primary Effect baskets in Tab 1)
+GICS_TO_ISM_BRIDGE: Dict[str, str] = {
+    "Technology": "Computer & Electronic Products",
+    "Industrials": "Machinery",                    # or Transportation Equipment / Fabricated Metal Products
+    "Materials": "Primary Metals",                 # or Chemical Products
+    "Consumer Discretionary": "Apparel, Leather & Allied Products",
+    "Consumer Staples": "Food, Beverage & Tobacco Products",
+    "Energy": "Petroleum & Coal Products",
+    "Health Care": "Miscellaneous Manufacturing",
+    "Financials": "Financial Activities",          # you can add this ISM key if you want
+    "Communication Services": "Computer & Electronic Products",  # partial overlap
+    "Utilities": "Fixed Income / Other",
+    "Real Estate": "Fixed Income / Other",
+}
+
+# GICS Sector → Driver exposure (for Tab 2 macro scoring)
+ETF_SECTOR_DRIVER_MAP: Dict[str, Dict[DriverName, float]] = {
+    "technology": {
+        DriverName.DEMAND_MOMENTUM: 0.85,
+        DriverName.CAPEX_PRESSURE: 0.65,
+    },
+    "industrials": {
+        DriverName.CAPEX_PRESSURE: 0.92,
+        DriverName.DEMAND_MOMENTUM: 0.72,
+        DriverName.INVENTORY_RESTOCKING: 0.55,
+    },
+    "materials": {
+        DriverName.INPUT_COST_INFLATION: 0.95,
+        DriverName.INVENTORY_RESTOCKING: 0.80,
+    },
+    "energy": {
+        DriverName.INPUT_COST_INFLATION: 0.88,
+        DriverName.CAPEX_PRESSURE: 0.75,
+    },
+    "financials": {
+        DriverName.SECTOR_SPECIFIC_STRENGTH: 0.85,
+    },
+    "health care": {
+        DriverName.DEMAND_MOMENTUM: 0.60,   # more defensive
+    },
+    "consumer staples": {
+        DriverName.DEMAND_MOMENTUM: 0.45,   # defensive
+    },
+    "consumer discretionary": {
+        DriverName.DEMAND_MOMENTUM: 0.78,
+    },
+}
 # ====================== ECONOMIC DRIVER CLASSES ======================
 class DriverName(str, Enum):
     DEMAND_MOMENTUM = "Demand Momentum"
@@ -752,7 +801,41 @@ def get_dominant_sector(sector_weights_json: str) -> str:
     except:
         pass
     return ""
+def score_etf_by_drivers(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
+    """Weighted scoring using actual sector weights → returns full driver vector + scores"""
+    try:
+        weights = json.loads(ticker_row["Sector_Weights"])
+        if not weights:
+            raise ValueError
+    except:
+        # fallback
+        dominant = get_dominant_sector(ticker_row.get("Sector_Weights", ""))
+        exposures = get_best_exposure(dominant) if dominant else {}
+        score = sum(exposures.get(d, 0.0) * drivers[d].strength for d in DriverName)
+        return {
+            **{d.value: exposures.get(d, 0.0) for d in DriverName},
+            "ism_score": round(score, 3),
+            "conviction": round(score * 0.8, 3),
+            "why": f"Dominant sector: {dominant}" if dominant else "No sector data"
+        }
 
+    # Weighted calculation
+    driver_vector = {d: 0.0 for d in DriverName}
+    for sector_name, weight_pct in weights.items():
+        sector_key = sector_name.lower().replace(" ", "")
+        if sector_key in ETF_SECTOR_DRIVER_MAP:
+            sector_drivers = ETF_SECTOR_DRIVER_MAP[sector_key]
+            for driver, exposure in sector_drivers.items():
+                driver_vector[driver] += (weight_pct / 100.0) * exposure
+
+    # Final scores
+    ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
+    return {
+        **{d.value: round(driver_vector[d], 3) for d in DriverName},
+        "ism_score": round(ism_score, 3),
+        "conviction": round(ism_score * 0.8, 3),   # slightly lower conviction than pure stocks
+        "why": "Weighted sector exposure"
+    }
 def show_etf_deep_dive(ticker: str):
     """Full ETF deep dive: 1Y chart + MACD + metrics + interactive sector pie"""
     if not ticker:
@@ -1458,21 +1541,16 @@ with tab2:
                 scored_stocks = tag_and_score_stocks(stocks_df, drivers) if not stocks_df.empty else pd.DataFrame()
 
                 # ETFs (using dominant sector)
+                                # ETFs - weighted sector scoring (new)
                 etfs_df = universe[universe["Type"] == "ETF"].copy()
                 scored_etfs = pd.DataFrame()
                 if not etfs_df.empty:
                     etf_rows = []
                     for _, row in etfs_df.iterrows():
-                        dominant = get_dominant_sector(row.get("Sector_Weights", ""))
-                        exposures = get_best_exposure(dominant) if dominant else {}
-                        vector = [exposures.get(d, 0.0) for d in DriverName]
-                        score = sum(v * drivers[d].strength for d, v in zip(DriverName, vector))
+                        etf_score_data = score_etf_by_drivers(row, drivers)
                         etf_rows.append({
                             **row.to_dict(),
-                            **{d.value: v for d, v in zip(DriverName, vector)},
-                            "ism_score": round(score, 3),
-                            "conviction": round(score * 0.8, 3),
-                            "why": f"Dominant sector: {dominant}" if dominant else "No sector data",
+                            **etf_score_data,
                             "Type": "ETF"
                         })
                     scored_etfs = pd.DataFrame(etf_rows)
