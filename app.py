@@ -1304,7 +1304,7 @@ with tab1:
     st.divider()
 
     # ====================== GENERATE BASKETS (Stocks + ETFs) ======================
-if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
+    if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
         universe = get_full_universe()
         if universe.empty:
             st.error("Universe could not be loaded.")
