@@ -1006,9 +1006,6 @@ def parse_report_text(text: str):
     month_year = month_match.group(0) if month_match else "Unknown"
 
     
-
-    # === UPDATED CALLS (this is what you were asking about) ===
-        # === ROBUST INDUSTRY LIST EXTRACTION (UPDATED) ===
         # === ROBUST INDUSTRY LIST EXTRACTION (POSITION-BASED) ===
     growth, contr = get_industry_lists(text)
     
@@ -1129,12 +1126,6 @@ subcomponents = latest_meta.get("subcomponents", {})
 tab1, tab2 = st.tabs(["Primary Effects (ISM > Sectors > Stocks)", "Fund Manager Macro Scoring (Driver Analysis)"])
 
 # ====================== TAB 1 ======================
-✅ Here is the complete, clean, ready-to-paste code for the entire Tab 1 section.
-Replace everything from the line that says:
-Python# ====================== TAB 1 ======================
-with tab1:
-all the way down to the end of the Industry Score Evolution chart (just before # ====================== TAB 2 ======================).
-Python# ====================== TAB 1 ======================
 with tab1:
     regime = "Expansion" if pmi_val >= 50 else "Contraction"
     regime_class = "pmi-expansion" if pmi_val >= 50 else "pmi-contraction"
