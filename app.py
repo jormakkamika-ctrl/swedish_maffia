@@ -1247,7 +1247,7 @@ if st.button("Generate Primary Effect Baskets for Selected Industries", type="pr
 
         with col_right:
             section_header("Selected Stock Analysis")
-            ticker = st.session_state.get("selected_ticker")
+ticker = st.session_state.get("selected_ticker")
 ticker_type = st.session_state.get("selected_type", "Stock")
 
 if ticker:
