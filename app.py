@@ -358,15 +358,16 @@ ETF_CATEGORY_TO_ISM: Dict[str, str] = {
 }
 
 # ====================== GICS SECTOR → ISM INDUSTRY BRIDGE (weighted) ======================
+# ====================== GICS SECTOR → ISM INDUSTRY BRIDGE ======================
 GICS_TO_ISM_BRIDGE: Dict[str, str] = {
     "Technology": "Computer & Electronic Products",
-    "Industrials": "Machinery",                    # or Transportation Equipment / Fabricated Metal Products
+    "Industrials": "Machinery",
     "Materials": "Primary Metals",
     "Consumer Discretionary": "Apparel, Leather & Allied Products",
     "Consumer Staples": "Food, Beverage & Tobacco Products",
     "Energy": "Petroleum & Coal Products",
     "Health Care": "Miscellaneous Manufacturing",
-    "Financials": "Financial Activities",          # you can add this to INDUSTRIES later if desired
+    "Financials": "Financial Activities",
     "Communication Services": "Computer & Electronic Products",
     "Utilities": "Fixed Income / Other",
     "Real Estate": "Fixed Income / Other",
@@ -374,10 +375,7 @@ GICS_TO_ISM_BRIDGE: Dict[str, str] = {
 }
 
 def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposure: float = 0.25) -> float:
-    """
-    Returns a weighted relevance score (0.0 - 1.0) of this ETF to the target ISM industry.
-    Uses the actual Sector_Weights JSON we already fetch.
-    """
+    """Returns weighted relevance score (0–1) of ETF to a specific ISM industry."""
     try:
         weights = json.loads(ticker_row["Sector_Weights"])
         if not weights:
@@ -387,12 +385,10 @@ def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposur
 
     total_relevance = 0.0
     for sector_name, weight_pct in weights.items():
-        # Normalize sector name
         sector_key = sector_name.strip().title()
         if sector_key in GICS_TO_ISM_BRIDGE and GICS_TO_ISM_BRIDGE[sector_key] == target_ism:
             total_relevance += (weight_pct / 100.0)
 
-    # Only include ETFs with meaningful exposure
     return total_relevance if total_relevance >= min_exposure else 0.0
 # ====================== ADVANCED ETF MAPPING (weighted sector-based) ======================
 
@@ -1308,7 +1304,7 @@ with tab1:
     st.divider()
 
     # ====================== GENERATE BASKETS (Stocks + ETFs) ======================
-        if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
+            if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
         universe = get_full_universe()
         if universe.empty:
             st.error("Universe could not be loaded.")
@@ -1324,7 +1320,7 @@ with tab1:
                 score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
                 direction = "GROWTH" if score_val > 0 else "CONTRACTION"
 
-                # === STOCK BASKET (unchanged) ===
+                # STOCK BASKET
                 yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
                 stock_df = universe[(universe["Type"] == "Stock") & 
                                    (universe["Yahoo Industry"].isin(yahoo_industries))].copy()
@@ -1332,15 +1328,13 @@ with tab1:
                     stock_df = stock_df.sort_values("Market Cap", ascending=False)
                     st.session_state.primary_baskets["stocks"][industry] = {"df": stock_df, "direction": direction}
 
-                # === ETF BASKET - NEW WEIGHTED LOGIC ===
+                # ETF BASKET - weighted by actual sector exposure
                 etf_candidates = universe[universe["Type"] == "ETF"].copy()
                 etf_df = pd.DataFrame()
                 if not etf_candidates.empty:
-                    # Calculate weighted relevance for every ETF to this ISM industry
                     etf_candidates["relevance"] = etf_candidates.apply(
                         lambda row: get_etf_relevance_to_ism(row, industry), axis=1
                     )
-                    # Keep only ETFs with meaningful exposure
                     etf_df = etf_candidates[etf_candidates["relevance"] > 0].copy()
                     if not etf_df.empty:
                         etf_df = etf_df.sort_values("relevance", ascending=False)
@@ -1350,7 +1344,7 @@ with tab1:
                     st.session_state.primary_baskets["etfs"][industry] = {"df": etf_df, "direction": direction}
 
             st.success(f"Generated baskets for {len(selected_industries)} industries "
-                       f"(stocks + weighted ETFs using sector exposure)")
+                       f"(stocks + weighted ETFs)")
 
     # ====================== DISPLAY BASKETS ======================
     if "primary_baskets" in st.session_state and (st.session_state.primary_baskets.get("stocks") or st.session_state.primary_baskets.get("etfs")):
