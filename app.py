@@ -956,21 +956,25 @@ def parse_ism_subcomponents(text: str) -> dict:
 
 # ====================== DATA LOADERS ======================
 @st.cache_data(ttl=86400 * 7, show_spinner=False)
-def get_full_universe():  # renamed + now supports ETFs
+def get_full_universe():
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
     try:
         df = pd.read_csv(csv_url)
         
-        # Standardize columns for backward compatibility
+        # Standardize size column
         if "Size" in df.columns:
             df["Market Cap"] = df["Size"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
         elif "Market Cap" in df.columns:
             df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
         
-        # Ensure Type column exists
+        # Ensure all ETF columns exist (safe for old + new CSV)
         if "Type" not in df.columns:
             df["Type"] = "Stock"
-        
+        if "Category" not in df.columns:
+            df["Category"] = ""
+        if "Sector_Weights" not in df.columns:
+            df["Sector_Weights"] = ""
+            
         return df
     except Exception as e:
         st.error(f"Could not load universe: {e}")
@@ -1168,46 +1172,51 @@ with tab1:
 
     section_header("Primary Effect Stock Baskets", "Direct NAICS-mapped companies from your selected industries")
 
-if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
-    universe = get_full_universe()
-    if universe.empty:
-        st.error("Universe could not be loaded.")
-    else:
-        if len(selected_rows["selection"]["rows"]) > 0:
-            selected_industries = ranked_df.iloc[selected_rows["selection"]["rows"]]["industry"].tolist()
+    if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
+        universe = get_full_universe()
+        if universe.empty:
+            st.error("Universe could not be loaded.")
         else:
-            selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
+            if len(selected_rows["selection"]["rows"]) > 0:
+                selected_industries = ranked_df.iloc[selected_rows["selection"]["rows"]]["industry"].tolist()
+            else:
+                selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
 
-        st.session_state.primary_baskets = {"stocks": {}, "etfs": {}}
+            st.session_state.primary_baskets = {"stocks": {}, "etfs": {}}
 
-        for industry in selected_industries:
-            score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
-            direction = "GROWTH" if score_val > 0 else "CONTRACTION"
+            for industry in selected_industries:
+                score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
+                direction = "GROWTH" if score_val > 0 else "CONTRACTION"
 
-            # === STOCK BASKET (unchanged) ===
-            yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
-            stock_df = universe[(universe["Type"] == "Stock") & 
-                               (universe["Yahoo Industry"].isin(yahoo_industries))].copy()
-            if not stock_df.empty:
-                stock_df = stock_df.sort_values("Size" if "Size" in stock_df.columns else "Market Cap", ascending=False)
-                st.session_state.primary_baskets["stocks"][industry] = {"df": stock_df, "direction": direction}
+                # === STOCK BASKET (unchanged) ===
+                yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
+                stock_df = universe[(universe["Type"] == "Stock") & 
+                                   (universe["Yahoo Industry"].isin(yahoo_industries))].copy()
+                if not stock_df.empty:
+                    stock_df = stock_df.sort_values("Market Cap", ascending=False)
+                    st.session_state.primary_baskets["stocks"][industry] = {"df": stock_df, "direction": direction}
 
-            # === ETF BASKET ===
-            # 1. Direct category match
-            etf_candidates = universe[universe["Type"] == "ETF"].copy()
-            etf_df = etf_candidates[etf_candidates["Category"].str.contains(industry.split()[-1], na=False, case=False)].copy()
-            
-            # 2. Fallback to our mapping
-            if etf_df.empty and industry in ETF_CATEGORY_TO_ISM.values():
-                mapped_cat = [k for k, v in ETF_CATEGORY_TO_ISM.items() if v == industry]
-                if mapped_cat:
-                    etf_df = etf_candidates[etf_candidates["Category"].isin(mapped_cat)].copy()
+                # === ETF BASKET (now safe even if Category column is missing) ===
+                etf_candidates = universe[universe["Type"] == "ETF"].copy()
+                if not etf_candidates.empty and "Category" in etf_candidates.columns:
+                    # Try to match on Category
+                    etf_df = etf_candidates[etf_candidates["Category"].str.contains(
+                        industry.split()[-1], na=False, case=False
+                    )].copy()
+                    
+                    # Fallback to our mapping if no direct match
+                    if etf_df.empty and industry in ETF_CATEGORY_TO_ISM.values():
+                        mapped_cats = [k for k, v in ETF_CATEGORY_TO_ISM.items() if v == industry]
+                        if mapped_cats:
+                            etf_df = etf_candidates[etf_candidates["Category"].isin(mapped_cats)].copy()
+                else:
+                    etf_df = pd.DataFrame()  # no ETFs or old CSV
 
-            if not etf_df.empty:
-                etf_df = etf_df.sort_values("Size" if "Size" in etf_df.columns else "Market Cap", ascending=False)
-                st.session_state.primary_baskets["etfs"][industry] = {"df": etf_df, "direction": direction}
+                if not etf_df.empty:
+                    etf_df = etf_df.sort_values("Market Cap", ascending=False)
+                    st.session_state.primary_baskets["etfs"][industry] = {"df": etf_df, "direction": direction}
 
-        st.success(f"Generated baskets for {len(selected_industries)} industries (stocks + ETFs)")
+            st.success(f"Generated baskets for {len(selected_industries)} industries (stocks + ETFs)")
 
     if "primary_baskets" in st.session_state and st.session_state.primary_baskets:
         col_left, col_right = st.columns([2, 3])
