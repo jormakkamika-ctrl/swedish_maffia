@@ -1212,8 +1212,8 @@ if st.button("Generate Primary Effect Baskets for Selected Industries", type="pr
     if "primary_baskets" in st.session_state and st.session_state.primary_baskets:
         col_left, col_right = st.columns([2, 3])
 
-        with col_left:
-    section_header("Industry Baskets", "Stocks + ETFs | Click any row for deep dive")
+    with col_left:
+        section_header("Industry Baskets", "Stocks + ETFs | Click any row for deep dive")
     
     # STOCKS
     if st.session_state.primary_baskets.get("stocks"):
