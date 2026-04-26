@@ -332,6 +332,30 @@ PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
     ]
 }
 
+# ====================== ETF → ISM MAPPING (granular where possible) ======================
+ETF_CATEGORY_TO_ISM: Dict[str, str] = {
+    # Sector ETFs (clean 1:1 mapping to your ISM keys)
+    "Technology": "Computer & Electronic Products",
+    "Consumer Defensive": "Food, Beverage & Tobacco Products",
+    "Basic Materials": "Primary Metals",
+    "Energy": "Petroleum & Coal Products",
+    "Industrials": "Machinery",
+    "Health Care": "Miscellaneous Manufacturing",
+    "Financial Services": "Financial Activities",      # new ISM key (you can add it to INDUSTRIES if you want)
+    "Financial": "Financial Activities",
+
+    # Broad equity ETFs → catch-all (you can change this later)
+    "Large Blend": "Diversified Equity",
+    "Large Growth": "Diversified Equity",
+    "Large Value": "Diversified Equity",
+    "Mid-Cap Blend": "Diversified Equity",
+    "Mid-Cap Growth": "Diversified Equity",
+    "Mid-Cap Value": "Diversified Equity",
+
+    # Everything else
+    "Intermediate Core Bond": "Fixed Income / Other",
+    "High Yield Bond": "Fixed Income / Other",
+}
 # ====================== ECONOMIC DRIVER CLASSES ======================
 class DriverName(str, Enum):
     DEMAND_MOMENTUM = "Demand Momentum"
@@ -717,6 +741,99 @@ def show_stock_deep_dive(ticker: str):
 
         st.caption(f"ISM Relevance: {ticker} | Industry: {info.get('industry', 'N/A')} | Sector: {info.get('sector', 'N/A')}")
 
+def get_dominant_sector(sector_weights_json: str) -> str:
+    """Helper for Tab 2 scoring"""
+    if not sector_weights_json or pd.isna(sector_weights_json):
+        return ""
+    try:
+        weights = json.loads(sector_weights_json)
+        if weights:
+            return max(weights, key=weights.get)
+    except:
+        pass
+    return ""
+
+def show_etf_deep_dive(ticker: str):
+    """Full deep dive for ETFs: chart + metrics + interactive sector pie"""
+    if not ticker:
+        return
+    with st.spinner(f"Loading {ticker}..."):
+        t = yf.Ticker(ticker)
+        info = t.info
+        hist = t.history(period="1y")
+
+        section_header(f"{ticker} — ETF Deep Dive", info.get("longName", ""))
+
+        # === 1Y CHART (same style as stocks) ===
+        if not hist.empty:
+            macd, signal, histo = calculate_macd(hist)
+            from plotly.subplots import make_subplots
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+                                row_heights=[0.68, 0.32],
+                                subplot_titles=(f"{ticker} — 1Y Price", "MACD (12, 26, 9)"))
+            
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], name="Close",
+                                     line=dict(color="#58a6ff", width=2), fill="tozeroy"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=macd, name="MACD", line=dict(color="#f0883e")), row=2, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=signal, name="Signal", line=dict(color="#3fb950")), row=2, col=1)
+            fig.add_trace(go.Bar(x=hist.index, y=histo, name="Histogram",
+                                 marker_color=np.where(histo >= 0, "rgba(63,185,80,0.7)", "rgba(248,81,73,0.7)")), row=2, col=1)
+            
+            fig.update_layout(height=520, hovermode="x", **PLOTLY_THEME)
+            fig.update_xaxes(showspikes=True, spikesnap="data", spikemode="across", matches='x', row=1, col=1)
+            fig.update_xaxes(showspikes=True, spikesnap="data", spikemode="across", row=2, col=1)
+            st.plotly_chart(fig, use_container_width=True)
+
+        # === ETF METRICS ===
+        col1, col2 = st.columns(2)
+        aum = info.get("netAssets") or info.get("totalAssets") or info.get("marketCap") or 0
+        with col1:
+            left = pd.DataFrame({
+                "Metric": ["AUM", "Category", "Expense Ratio", "1Y Return"],
+                "Value": [
+                    f"${aum/1e9:.1f}B" if aum else "N/A",
+                    info.get("category", "N/A"),
+                    f"{info.get('expenseRatio', 0)*100:.2f}%" if info.get('expenseRatio') else "N/A",
+                    f"{((hist['Close'].iloc[-1]/hist['Close'].iloc[0])-1)*100:.1f}%" if not hist.empty else "N/A"
+                ]
+            })
+            st.dataframe(left, use_container_width=True, hide_index=True)
+
+        with col2:
+            # Sector pie chart (the illustration you asked for)
+            sector_json = ""
+            try:
+                # Try to get fresh data first, fall back to universe data
+                if hasattr(t, 'funds_data') and t.funds_data is not None:
+                    sw = t.funds_data.sector_weightings
+                    if sw is not None and not sw.empty:
+                        sector_json = json.dumps({k: round(float(v)*100, 2) for k, v in sw.to_dict().items()})
+            except:
+                pass
+            
+            if not sector_json:
+                # fallback to what we stored in universe.csv
+                universe = get_full_universe()
+                row = universe[universe["Ticker"] == ticker]
+                if not row.empty:
+                    sector_json = row["Sector_Weights"].iloc[0]
+            
+            if sector_json and pd.notna(sector_json) and sector_json != "":
+                weights = json.loads(sector_json)
+                if weights:
+                    df_w = pd.DataFrame(list(weights.items()), columns=["Sector", "%"]).sort_values("%", ascending=False)
+                    fig_pie = px.pie(df_w, names="Sector", values="%", title="Sector Allocation",
+                                     color_discrete_sequence=px.colors.sequential.Blues_r)
+                    fig_pie.update_traces(textinfo="percent+label", hovertemplate="%{label}<br>%{value:.1f}%")
+                    fig_pie.update_layout(**PLOTLY_THEME, height=380)
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.info("No sector breakdown available.")
+            else:
+                st.info("No sector breakdown available.")
+
+        st.caption(f"ISM Relevance: {info.get('category', 'N/A')} | Type: ETF")
+
 # ====================== UTILS ======================
 def normalize_name(name: str) -> str:
     name = name.lower().strip().replace("&", "and")
@@ -839,14 +956,24 @@ def parse_ism_subcomponents(text: str) -> dict:
 
 # ====================== DATA LOADERS ======================
 @st.cache_data(ttl=86400 * 7, show_spinner=False)
-def get_full_stock_universe():
+def get_full_universe():  # renamed + now supports ETFs
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
     try:
         df = pd.read_csv(csv_url)
-        if "Market Cap" in df.columns:
-            df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B")
+        
+        # Standardize columns for backward compatibility
+        if "Size" in df.columns:
+            df["Market Cap"] = df["Size"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
+        elif "Market Cap" in df.columns:
+            df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
+        
+        # Ensure Type column exists
+        if "Type" not in df.columns:
+            df["Type"] = "Stock"
+        
         return df
     except Exception as e:
+        st.error(f"Could not load universe: {e}")
         return pd.DataFrame()
 
 def parse_report_text(text: str):
@@ -1042,58 +1169,92 @@ with tab1:
     section_header("Primary Effect Stock Baskets", "Direct NAICS-mapped companies from your selected industries")
 
     if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
-        stocks_df = get_full_stock_universe()
-        if stocks_df.empty:
-            st.error("Universe CSV could not be loaded.")
+    universe = get_full_universe()
+    if universe.empty:
+        st.error("Universe could not be loaded.")
+    else:
+        if len(selected_rows["selection"]["rows"]) > 0:
+            selected_industries = ranked_df.iloc[selected_rows["selection"]["rows"]]["industry"].tolist()
         else:
-            if len(selected_rows["selection"]["rows"]) > 0:
-                selected_industries = ranked_df.iloc[selected_rows["selection"]["rows"]]["industry"].tolist()
-            else:
-                selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
+            selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
 
-            st.session_state.primary_baskets = {}
-            for industry in selected_industries:
-                yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
-                if not yahoo_industries:
-                    continue
-                filtered = stocks_df[stocks_df["Yahoo Industry"].isin(yahoo_industries)].copy()
-                filtered = filtered.sort_values("Market Cap", ascending=False)
-                score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
-                direction = "GROWTH" if score_val > 0 else "CONTRACTION"
-                st.session_state.primary_baskets[industry] = {"df": filtered, "direction": direction}
+        st.session_state.primary_baskets = {"stocks": {}, "etfs": {}}
 
-            st.success(f"Generated baskets for {len(st.session_state.primary_baskets)} industries.")
+        for industry in selected_industries:
+            score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
+            direction = "GROWTH" if score_val > 0 else "CONTRACTION"
+
+            # === STOCK BASKET (unchanged) ===
+            yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
+            stock_df = universe[(universe["Type"] == "Stock") & 
+                               (universe["Yahoo Industry"].isin(yahoo_industries))].copy()
+            if not stock_df.empty:
+                stock_df = stock_df.sort_values("Size" if "Size" in stock_df.columns else "Market Cap", ascending=False)
+                st.session_state.primary_baskets["stocks"][industry] = {"df": stock_df, "direction": direction}
+
+            # === ETF BASKET ===
+            # 1. Direct category match
+            etf_candidates = universe[universe["Type"] == "ETF"].copy()
+            etf_df = etf_candidates[etf_candidates["Category"].str.contains(industry.split()[-1], na=False, case=False)].copy()
+            
+            # 2. Fallback to our mapping
+            if etf_df.empty and industry in ETF_CATEGORY_TO_ISM.values():
+                mapped_cat = [k for k, v in ETF_CATEGORY_TO_ISM.items() if v == industry]
+                if mapped_cat:
+                    etf_df = etf_candidates[etf_candidates["Category"].isin(mapped_cat)].copy()
+
+            if not etf_df.empty:
+                etf_df = etf_df.sort_values("Size" if "Size" in etf_df.columns else "Market Cap", ascending=False)
+                st.session_state.primary_baskets["etfs"][industry] = {"df": etf_df, "direction": direction}
+
+        st.success(f"Generated baskets for {len(selected_industries)} industries (stocks + ETFs)")
 
     if "primary_baskets" in st.session_state and st.session_state.primary_baskets:
         col_left, col_right = st.columns([2, 3])
 
         with col_left:
-            section_header("Industry Baskets", "Click any row to open deep dive")
-            for industry, data in st.session_state.primary_baskets.items():
-                direction_tag = data["direction"]
-                with st.expander(f"{industry} [{direction_tag}]", expanded=True):
-                    df_display = data["df"][["Ticker", "Company", "Yahoo Industry", "Market Cap"]].copy()
-                    df_display["Yahoo Finance"] = df_display["Ticker"].apply(
-                        lambda t: f"https://finance.yahoo.com/quote/{t}"
-                    )
-                    selection = st.dataframe(
-                        df_display,
-                        use_container_width=True,
-                        hide_index=True,
-                        on_select="rerun",
-                        selection_mode="single-row",
-                        column_config={
-                            "Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")
-                        }
-                    )
-                    if selection["selection"]["rows"]:
-                        st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
+    section_header("Industry Baskets", "Stocks + ETFs | Click any row for deep dive")
+    
+    # STOCKS
+    if st.session_state.primary_baskets.get("stocks"):
+        st.subheader("Stocks")
+        for industry, data in st.session_state.primary_baskets["stocks"].items():
+            direction_tag = data["direction"]
+            with st.expander(f"📌 {industry} [{direction_tag}] — Stocks", expanded=True):
+                df_display = data["df"][["Ticker", "Company", "Yahoo Industry", "Market Cap"]].copy()
+                df_display["Yahoo Finance"] = df_display["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
+                selection = st.dataframe(df_display, use_container_width=True, hide_index=True,
+                                         on_select="rerun", selection_mode="single-row",
+                                         column_config={"Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")})
+                if selection["selection"]["rows"]:
+                    st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
+                    st.session_state.selected_type = "Stock"
+
+    # ETFs (new section)
+    if st.session_state.primary_baskets.get("etfs"):
+        st.subheader("ETFs")
+        for industry, data in st.session_state.primary_baskets["etfs"].items():
+            direction_tag = data["direction"]
+            with st.expander(f"📌 {industry} [{direction_tag}] — ETFs", expanded=True):
+                df_display = data["df"][["Ticker", "Company", "Category", "Market Cap"]].copy()
+                df_display["Yahoo Finance"] = df_display["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
+                selection = st.dataframe(df_display, use_container_width=True, hide_index=True,
+                                         on_select="rerun", selection_mode="single-row",
+                                         column_config={"Yahoo Finance": st.column_config.LinkColumn("Yahoo Finance", display_text="View")})
+                if selection["selection"]["rows"]:
+                    st.session_state.selected_ticker = df_display.iloc[selection["selection"]["rows"][0]]["Ticker"]
+                    st.session_state.selected_type = "ETF"
 
         with col_right:
             section_header("Selected Stock Analysis")
             ticker = st.session_state.get("selected_ticker")
-            if ticker:
-                show_stock_deep_dive(ticker)
+ticker_type = st.session_state.get("selected_type", "Stock")
+
+if ticker:
+    if ticker_type == "ETF":
+        show_etf_deep_dive(ticker)
+    else:
+        show_stock_deep_dive(ticker)
             else:
                 st.markdown("""
                 <div style="
