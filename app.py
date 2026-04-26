@@ -1255,7 +1255,7 @@ if ticker:
         show_etf_deep_dive(ticker)
     else:
         show_stock_deep_dive(ticker)
-            else:
+else:
                 st.markdown("""
                 <div style="
                 background: #161b22;
