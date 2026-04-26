@@ -1168,7 +1168,7 @@ with tab1:
 
     section_header("Primary Effect Stock Baskets", "Direct NAICS-mapped companies from your selected industries")
 
-    if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
+if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
     universe = get_full_universe()
     if universe.empty:
         st.error("Universe could not be loaded.")
