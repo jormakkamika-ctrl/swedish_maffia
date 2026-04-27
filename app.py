@@ -481,29 +481,26 @@ def apply_theme_override(ticker_row: pd.Series) -> Dict[str, float] | None:
 
 
 def safe_parse_sector_weights(sector_weights_str) -> dict:
-    """Bulletproof parser for Sector_Weights column coming from CSV."""
+    """Bulletproof parser for Sector_Weights column coming from pandas CSV."""
     if pd.isna(sector_weights_str) or not sector_weights_str:
         return {}
     
     s = str(sector_weights_str).strip()
-    if s in ["", "{}", "nan", "NaN", "{}"]:
+    if s in ["", "{}", "nan", "NaN", "[]"]:
         return {}
     
-    # Step 1: Remove outer quotes that pandas sometimes adds
-    if s.startswith('"') and s.endswith('"'):
+    # Remove outer quotes added by pandas
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         s = s[1:-1]
     
-    # Step 2: Fix CSV double-quoting ("" → ")
+    # Fix double-escaped quotes
     s = s.replace('""', '"')
-    
-    # Step 3: Remove any stray backslashes
-    s = s.replace('\\\\', '\\')
     
     try:
         weights = json.loads(s)
         return weights if isinstance(weights, dict) else {}
     except json.JSONDecodeError:
-        # Last-resort fallback (rare)
+        # Fallback: try ast.literal_eval for stubborn cases
         try:
             import ast
             parsed = ast.literal_eval(s)
