@@ -7,6 +7,7 @@ import time
 import plotly.express as px
 import numpy as np
 import yfinance as yf
+import json
 import plotly.graph_objects as go
 from datetime import datetime
 from dataclasses import dataclass
