@@ -470,19 +470,51 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
     return drivers
 
 def apply_theme_override(ticker_row: pd.Series) -> Dict[str, float] | None:
-    """High-precision thematic override — exact word match only."""
+    """High-precision thematic override — whole-word match only."""
     name = str(ticker_row.get("Security Name", "")) + " " + str(ticker_row.get("Company", ""))
     name_lower = name.lower()
     for theme, overrides in THEME_OVERRIDES.items():
-        if theme.lower() in name_lower.split():   # whole-word match only
+        if theme.lower() in name_lower.split():   # avoids partial matches like "DEMAND"
             return overrides
     return None
 
 
-def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Investment-grade weighted macro score for ETFs — now extremely robust with CSV parsing."""
+def safe_parse_sector_weights(sector_weights_str) -> dict:
+    """Bulletproof parser for Sector_Weights column coming from CSV."""
+    if pd.isna(sector_weights_str) or not sector_weights_str:
+        return {}
     
-    # 1. High-precision thematic override (first, highest conviction)
+    s = str(sector_weights_str).strip()
+    if s in ["", "{}", "nan", "NaN", "{}"]:
+        return {}
+    
+    # Step 1: Remove outer quotes that pandas sometimes adds
+    if s.startswith('"') and s.endswith('"'):
+        s = s[1:-1]
+    
+    # Step 2: Fix CSV double-quoting ("" → ")
+    s = s.replace('""', '"')
+    
+    # Step 3: Remove any stray backslashes
+    s = s.replace('\\\\', '\\')
+    
+    try:
+        weights = json.loads(s)
+        return weights if isinstance(weights, dict) else {}
+    except json.JSONDecodeError:
+        # Last-resort fallback (rare)
+        try:
+            import ast
+            parsed = ast.literal_eval(s)
+            return parsed if isinstance(parsed, dict) else {}
+        except:
+            return {}
+
+
+def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
+    """Investment-grade weighted macro score for ETFs — now extremely robust."""
+    
+    # 1. Thematic override (highest precision)
     theme_override = apply_theme_override(ticker_row)
     if theme_override:
         driver_vector = {d: 0.0 for d in DriverName}
@@ -497,33 +529,17 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Robust sector-weighted scoring
-    sector_weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
+    # 2. Robust sector weights parsing
+    weights = safe_parse_sector_weights(ticker_row.get("Sector_Weights", ""))
     
-    if pd.isna(sector_weights_str) or sector_weights_str == "" or sector_weights_str == "nan" or sector_weights_str == "{}":
+    if not weights:
         return {
             "ism_score": 0.0, 
             "conviction": 0.0, 
             "why": "No sector weights data"
         }
 
-    try:
-        # Fix common CSV escaping issues
-        cleaned = sector_weights_str
-        if cleaned.startswith('"') and cleaned.endswith('"'):
-            cleaned = cleaned[1:-1].replace('""', '"')
-        
-        weights = json.loads(cleaned)
-        if not isinstance(weights, dict) or not weights:
-            raise ValueError("Empty or invalid weights dict")
-    except Exception:
-        return {
-            "ism_score": 0.0, 
-            "conviction": 0.0, 
-            "why": "JSON parse failed"
-        }
-
-    # 3. Normal weighted sector scoring
+    # 3. Weighted sector scoring
     driver_vector = {d: 0.0 for d in DriverName}
     for sector_name, weight_pct in weights.items():
         sector_key = str(sector_name).strip().title()
