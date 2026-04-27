@@ -481,36 +481,33 @@ def apply_theme_override(ticker_row: pd.Series) -> Dict[str, float] | None:
 
 
 def safe_parse_sector_weights(sector_weights_str) -> dict:
-    """Bulletproof parser for Sector_Weights column coming from pandas CSV."""
-    if pd.isna(sector_weights_str) or not sector_weights_str:
+    """Reliable parser for Sector_Weights column loaded from pandas CSV."""
+    if pd.isna(sector_weights_str) or not str(sector_weights_str).strip():
         return {}
-    
+
     s = str(sector_weights_str).strip()
-    if s in ["", "{}", "nan", "NaN", "[]"]:
-        return {}
-    
-    # Remove outer quotes added by pandas
+
+    # Remove outer quotes that pandas adds
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         s = s[1:-1]
-    
-    # Fix double-escaped quotes
+
+    # Fix double-escaped quotes ("" → ")
     s = s.replace('""', '"')
-    
+
     try:
         weights = json.loads(s)
-        return weights if isinstance(weights, dict) else {}
+        return weights if isinstance(weights, dict) and weights else {}
     except json.JSONDecodeError:
-        # Fallback: try ast.literal_eval for stubborn cases
         try:
             import ast
             parsed = ast.literal_eval(s)
-            return parsed if isinstance(parsed, dict) else {}
+            return parsed if isinstance(parsed, dict) and parsed else {}
         except:
             return {}
 
 
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Investment-grade weighted macro score for ETFs — now extremely robust."""
+    """Investment-grade weighted macro score for ETFs."""
     
     # 1. Thematic override (highest precision)
     theme_override = apply_theme_override(ticker_row)
@@ -527,9 +524,9 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Robust sector weights parsing
+    # 2. Parse sector weights
     weights = safe_parse_sector_weights(ticker_row.get("Sector_Weights", ""))
-    
+
     if not weights:
         return {
             "ism_score": 0.0, 
