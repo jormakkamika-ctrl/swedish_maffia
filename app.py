@@ -507,16 +507,9 @@ def safe_parse_sector_weights(sector_weights_str) -> dict:
 
 
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Debug version — shows exactly what the raw data looks like."""
-    ticker = ticker_row.get("Ticker", "Unknown")
+    """Clean, final version — uses your existing SECTOR_DRIVER_MAPPING."""
     
-    # === DEBUG PRINTS (visible in app + terminal) ===
-    if ticker in ["VTI", "SPY", "QQQ", "XLK", "IWM"] or "debug_shown" not in st.session_state:
-        st.session_state.debug_shown = True
-        raw = str(ticker_row.get("Sector_Weights", ""))
-        st.info(f"**DEBUG {ticker}** — Raw Sector_Weights: `{raw[:300]}`...")
-
-    # 1. Thematic override
+    # 1. Thematic override (highest precision)
     theme_override = apply_theme_override(ticker_row)
     if theme_override:
         driver_vector = {d: 0.0 for d in DriverName}
@@ -531,7 +524,7 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Sector weights parsing
+    # 2. Sector-weighted scoring
     weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
     if not weights_str or weights_str == "{}":
         return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
@@ -540,10 +533,9 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
         weights = json.loads(weights_str)
         if not isinstance(weights, dict) or not weights:
             return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
-    except Exception as e:
-        return {"ism_score": 0.0, "conviction": 0.0, "why": f"JSON parse failed: {str(e)[:50]}"}
+    except:
+        return {"ism_score": 0.0, "conviction": 0.0, "why": "JSON parse failed"}
 
-    # 3. Weighted scoring
     driver_vector = {d: 0.0 for d in DriverName}
     for sector_name, weight_pct in weights.items():
         sector_key = str(sector_name).strip().title()
@@ -1313,47 +1305,66 @@ with tab1:
     st.divider()
 
     # ====================== GENERATE BASKETS (Stocks + ETFs) ======================
-    if st.button("Generate Primary Effect Baskets for Selected Industries", type="primary", use_container_width=True):
-        universe = get_full_universe()
-        if universe.empty:
-            st.error("Universe could not be loaded.")
-        else:
-            if len(selected_rows["selection"]["rows"]) > 0:
-                selected_industries = ranked_df.iloc[selected_rows["selection"]["rows"]]["industry"].tolist()
-            else:
-                selected_industries = [ind for ind, score in zip(current_df["industry"], current_df["score"]) if score != 0]
+                    if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
+                    with st.spinner("Scoring full universe (stocks + ETFs) against ISM driver vector..."):
+                        universe = get_full_universe()
+                        if universe.empty:
+                            st.error("Universe could not be loaded.")
+                            st.stop()
 
-            st.session_state.primary_baskets = {"stocks": {}, "etfs": {}}
+                        # Score stocks
+                        stocks_df = universe[universe["Type"] == "Stock"].copy()
+                        scored_stocks = tag_and_score_stocks(stocks_df, drivers) if not stocks_df.empty else pd.DataFrame()
 
-            for industry in selected_industries:
-                score_val = current_df.loc[current_df['industry'] == industry, 'score'].iloc[0]
-                direction = "GROWTH" if score_val > 0 else "CONTRACTION"
+                        # Score ETFs
+                        etfs_df = universe[universe["Type"] == "ETF"].copy()
+                        scored_etfs = pd.DataFrame()
+                        if not etfs_df.empty:
+                            etf_rows = []
+                            for _, row in etfs_df.iterrows():
+                                etf_score_data = calculate_etf_macro_score(row, drivers)
+                                etf_rows.append({
+                                    **row.to_dict(),
+                                    **etf_score_data,
+                                    "Type": "ETF"
+                                })
+                            scored_etfs = pd.DataFrame(etf_rows)
 
-                # STOCK BASKET
-                yahoo_industries = PRIMARY_ISM_MAPPING.get(industry, [])
-                stock_df = universe[(universe["Type"] == "Stock") & 
-                                   (universe["Yahoo Industry"].isin(yahoo_industries))].copy()
-                if not stock_df.empty:
-                    stock_df = stock_df.sort_values("Market Cap", ascending=False)
-                    st.session_state.primary_baskets["stocks"][industry] = {"df": stock_df, "direction": direction}
+                        # Combine
+                        scored_df = pd.concat([scored_stocks, scored_etfs], ignore_index=True)
+                        if not scored_df.empty:
+                            scored_df = scored_df.sort_values("conviction", ascending=False).reset_index(drop=True)
 
-                # ETF BASKET - weighted by actual sector exposure
-                etf_candidates = universe[universe["Type"] == "ETF"].copy()
-                etf_df = pd.DataFrame()
-                if not etf_candidates.empty:
-                    etf_candidates["relevance"] = etf_candidates.apply(
-                        lambda row: get_etf_relevance_to_ism(row, industry), axis=1
-                    )
-                    etf_df = etf_candidates[etf_candidates["relevance"] > 0].copy()
-                    if not etf_df.empty:
-                        etf_df = etf_df.sort_values("relevance", ascending=False)
+                        st.session_state.scored_df_tab2 = scored_df
+                        st.success(f"Scored {len(scored_df):,} instruments ({len(scored_stocks)} stocks + {len(scored_etfs)} ETFs)")
 
-                if not etf_df.empty:
-                    etf_df = etf_df.drop(columns=["relevance"], errors="ignore")
-                    st.session_state.primary_baskets["etfs"][industry] = {"df": etf_df, "direction": direction}
+                    # ====================== 3-COLUMN DISPLAY ======================
+                    col1, col2, col3 = st.columns(3)
 
-            st.success(f"Generated baskets for {len(selected_industries)} industries "
-                       f"(stocks + weighted ETFs)")
+                    with col1:
+                        section_header("📈 Top Long Ideas (Stocks)")
+                        top_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)].head(15)
+                        st.dataframe(top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]], 
+                                    use_container_width=True, hide_index=True)
+
+                    with col2:
+                        section_header("📉 Short Candidates (Stocks)")
+                        short_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)].head(15)
+                        st.dataframe(short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]], 
+                                    use_container_width=True, hide_index=True)
+
+                    with col3:
+                        section_header("🏛 Top ETF Ideas")
+                        top_etfs = scored_df[(scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)].head(12)
+                        if top_etfs.empty:
+                            st.info("No high-scoring ETFs yet — check Sector_Weights column")
+                        else:
+                            st.dataframe(top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]], 
+                                        use_container_width=True, hide_index=True)
+
+                    st.divider()
+                    st.dataframe(scored_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "ism_score", "conviction", "why"]]
+                                .sort_values("conviction", ascending=False), use_container_width=True)
 
     # ====================== DISPLAY BASKETS ======================
     # ====================== DISPLAY BASKETS (Stocks + ETFs) ======================
