@@ -1589,7 +1589,7 @@ with tab2:
                     })
                 scored_etfs = pd.DataFrame(etf_rows)
 
-            # Combine
+            # Combine everything
             scored_df = pd.concat([scored_stocks, scored_etfs], ignore_index=True)
             if not scored_df.empty:
                 scored_df = scored_df.sort_values("conviction", ascending=False).reset_index(drop=True)
@@ -1602,24 +1602,39 @@ with tab2:
 
         with col1:
             section_header("📈 Top Long Ideas (Stocks)")
-            top_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)].head(15)
-            st.dataframe(top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]], 
-                        use_container_width=True, hide_index=True)
+            top_stocks = scored_df[
+                (scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)
+            ].head(15)
+            st.dataframe(
+                top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
+                use_container_width=True,
+                hide_index=True
+            )
 
         with col2:
             section_header("📉 Short Candidates (Stocks)")
-            short_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)].head(15)
-            st.dataframe(short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]], 
-                        use_container_width=True, hide_index=True)
+            short_stocks = scored_df[
+                (scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)
+            ].head(15)
+            st.dataframe(
+                short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
+                use_container_width=True,
+                hide_index=True
+            )
 
         with col3:
             section_header("🏛 Top ETF Ideas")
-            top_etfs = scored_df[(scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)].head(12)
+            top_etfs = scored_df[
+                (scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)
+            ].head(12)
             if top_etfs.empty:
                 st.info("No high-scoring ETFs yet. Run Deep Refresh and try again.")
             else:
-                st.dataframe(top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]], 
-                            use_container_width=True, hide_index=True)
+                st.dataframe(
+                    top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
         st.divider()
         st.dataframe(
@@ -1629,96 +1644,32 @@ with tab2:
             hide_index=True
         )
 
-    if "scored_df_tab2" in st.session_state:
-        scored_df = st.session_state.scored_df_tab2
-
-        col_left, col_right = st.columns([2, 3])
-
-        with col_left:
-            section_header("Top Ranked — Long Ideas")
-            top_df = scored_df[scored_df["ism_score"] > 0.25].head(40).copy()
-            if top_df.empty:
-                top_df = scored_df.head(30).copy()
-
-            top_df = top_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "Market Cap", "ism_score", "conviction", "why"]].copy()
-            top_df["Link"] = top_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-
-            top_sel = st.dataframe(
-                top_df,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                column_config={
-                    "ism_score": st.column_config.ProgressColumn("ISM Score", format="%.3f", min_value=-1.0, max_value=1.0),
-                    "conviction": st.column_config.ProgressColumn("Conviction", format="%.3f", min_value=0.0, max_value=1.5),
-                    "why": st.column_config.TextColumn("Rationale", width="large"),
-                    "Link": st.column_config.LinkColumn("Yahoo", display_text="View"),
-                }
-            )
-            if top_sel["selection"]["rows"]:
-                st.session_state.selected_ticker_tab2 = top_df.iloc[top_sel["selection"]["rows"][0]]["Ticker"]
-                st.session_state.selected_type_tab2 = top_df.iloc[top_sel["selection"]["rows"][0]]["Type"]
-
-            st.divider()
-
-            section_header("Bottom Ranked — Short Candidates")
-            short_candidates = scored_df[scored_df["ism_score"] < -0.08].head(40).copy()
-            if short_candidates.empty:
-                bottom_df = scored_df.tail(30)[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "Market Cap", "ism_score", "why"]].copy()
-            else:
-                bottom_df = short_candidates[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "Market Cap", "ism_score", "why"]].copy()
-            bottom_df["Link"] = bottom_df["Ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-
-            bot_sel = st.dataframe(
-                bottom_df,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                column_config={
-                    "ism_score": st.column_config.ProgressColumn("Signal", format="%.3f", min_value=-1.0, max_value=1.0),
-                    "why": st.column_config.TextColumn("Rationale", width="medium"),
-                    "Link": st.column_config.LinkColumn("Yahoo", display_text="View"),
-                }
-            )
-            if bot_sel["selection"]["rows"]:
-                st.session_state.selected_ticker_tab2 = bottom_df.iloc[bot_sel["selection"]["rows"][0]]["Ticker"]
-                st.session_state.selected_type_tab2 = bottom_df.iloc[bot_sel["selection"]["rows"][0]]["Type"]
-
-        with col_right:
-            section_header("Selected Instrument Analysis")
-            ticker = st.session_state.get("selected_ticker_tab2")
-            ticker_type = st.session_state.get("selected_type_tab2", "Stock")
-            if ticker:
-                if ticker_type == "ETF":
-                    show_etf_deep_dive(ticker)
-                else:
-                    show_stock_deep_dive(ticker)
-            else:
-                st.markdown("""
-                <div style="background: #161b22; border: 1px dashed #30363d; border-radius: 8px; padding: 48px 32px; text-align: center; color: #8b949e; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;">
-                Select an instrument from the ranked lists on the left<br>to open the professional deep dive panel.
-                </div>
-                """, unsafe_allow_html=True)
-
-        st.divider()
-        csv = scored_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Download Full Ranked List (CSV)",
-            csv,
-            f"ISM_Scored_Universe_{latest_date.strftime('%Y-%m')}.csv",
-            use_container_width=True
-        )
-
-    else:
-        st.markdown("""
-        <div style="background: #161b22; border: 1px dashed #30363d; border-radius: 8px; padding: 36px 32px; text-align: center; color: #8b949e; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;">
-        Press the button above to score the full universe (stocks + ETFs) against the current ISM driver vector.
-        </div>
-        """, unsafe_allow_html=True)
-
+    # ====================== HISTORICAL BACKTEST ======================
     st.divider()
+
+    section_header("Historical Backtest", "Re-run ISM scoring against any past report")
+    if report_metadata:
+        historical_dates = sorted(report_metadata.keys(), reverse=True)
+        date_options = [d.strftime('%B %Y') for d in historical_dates]
+        selected_month_str = st.selectbox("Select past ISM report:", options=date_options, index=0)
+        selected_date = next(d for d in historical_dates if d.strftime('%B %Y') == selected_month_str)
+
+        if st.button(f"Re-run Scoring for {selected_month_str}", type="primary", use_container_width=True):
+            with st.spinner(f"Re-calculating for {selected_month_str}..."):
+                hist_meta = report_metadata[selected_date]
+                hist_drivers = calculate_drivers(hist_meta.get("subcomponents", {}))
+                universe = get_full_universe()
+                stocks_df = universe[universe["Type"] == "Stock"].copy()
+                scored_hist = tag_and_score_stocks(stocks_df, hist_drivers) if not stocks_df.empty else pd.DataFrame()
+                st.success(f"Backtest complete for {selected_month_str}")
+                st.dataframe(
+                    scored_hist.head(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "ism_score": st.column_config.ProgressColumn("Signal Strength", format="%.3f", min_value=-1.0, max_value=1.0)
+                    }
+                )
 
     section_header("Historical Backtest", "Re-run ISM scoring against any past report")
     if report_metadata:
