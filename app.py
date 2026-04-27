@@ -1305,18 +1305,18 @@ with tab1:
     st.divider()
 
     # ====================== GENERATE BASKETS (Stocks + ETFs) ======================
-if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
+                if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
                     with st.spinner("Scoring full universe (stocks + ETFs) against ISM driver vector..."):
                         universe = get_full_universe()
                         if universe.empty:
                             st.error("Universe could not be loaded.")
                             st.stop()
 
-                        # Score stocks
+                        # === Score Stocks ===
                         stocks_df = universe[universe["Type"] == "Stock"].copy()
                         scored_stocks = tag_and_score_stocks(stocks_df, drivers) if not stocks_df.empty else pd.DataFrame()
 
-                        # Score ETFs
+                        # === Score ETFs ===
                         etfs_df = universe[universe["Type"] == "ETF"].copy()
                         scored_etfs = pd.DataFrame()
                         if not etfs_df.empty:
@@ -1330,7 +1330,7 @@ if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", us
                                 })
                             scored_etfs = pd.DataFrame(etf_rows)
 
-                        # Combine
+                        # Combine everything
                         scored_df = pd.concat([scored_stocks, scored_etfs], ignore_index=True)
                         if not scored_df.empty:
                             scored_df = scored_df.sort_values("conviction", ascending=False).reset_index(drop=True)
@@ -1338,33 +1338,52 @@ if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", us
                         st.session_state.scored_df_tab2 = scored_df
                         st.success(f"Scored {len(scored_df):,} instruments ({len(scored_stocks)} stocks + {len(scored_etfs)} ETFs)")
 
-                    # ====================== 3-COLUMN DISPLAY ======================
+                    # ====================== THREE CLEAN COLUMNS ======================
                     col1, col2, col3 = st.columns(3)
 
                     with col1:
                         section_header("📈 Top Long Ideas (Stocks)")
-                        top_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)].head(15)
-                        st.dataframe(top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]], 
-                                    use_container_width=True, hide_index=True)
+                        top_stocks = scored_df[
+                            (scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)
+                        ].head(15)
+                        st.dataframe(
+                            top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
                     with col2:
                         section_header("📉 Short Candidates (Stocks)")
-                        short_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)].head(15)
-                        st.dataframe(short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]], 
-                                    use_container_width=True, hide_index=True)
+                        short_stocks = scored_df[
+                            (scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)
+                        ].head(15)
+                        st.dataframe(
+                            short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
                     with col3:
                         section_header("🏛 Top ETF Ideas")
-                        top_etfs = scored_df[(scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)].head(12)
+                        top_etfs = scored_df[
+                            (scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)
+                        ].head(12)
                         if top_etfs.empty:
-                            st.info("No high-scoring ETFs yet — check Sector_Weights column")
+                            st.info("No high-scoring ETFs yet. Run Deep Refresh and try again.")
                         else:
-                            st.dataframe(top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]], 
-                                        use_container_width=True, hide_index=True)
+                            st.dataframe(
+                                top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]],
+                                use_container_width=True,
+                                hide_index=True
+                            )
 
                     st.divider()
-                    st.dataframe(scored_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "ism_score", "conviction", "why"]]
-                                .sort_values("conviction", ascending=False), use_container_width=True)
+                    st.dataframe(
+                        scored_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "ism_score", "conviction", "why"]]
+                        .sort_values("conviction", ascending=False),
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
     # ====================== DISPLAY BASKETS ======================
     # ====================== DISPLAY BASKETS (Stocks + ETFs) ======================
