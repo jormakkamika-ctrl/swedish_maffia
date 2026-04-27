@@ -1305,7 +1305,7 @@ with tab1:
     st.divider()
 
     # ====================== GENERATE BASKETS (Stocks + ETFs) ======================
-                    if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
+if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
                     with st.spinner("Scoring full universe (stocks + ETFs) against ISM driver vector..."):
                         universe = get_full_universe()
                         if universe.empty:
