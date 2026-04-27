@@ -1563,7 +1563,7 @@ with tab2:
 
     section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe ranked by ISM driver alignment")
 
-        # ====================== GENERATE RANKED IDEAS (Tab 2) ======================
+    # ====================== GENERATE RANKED IDEAS (Tab 2) ======================
     if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
         with st.spinner("Scoring full universe (stocks + ETFs) against ISM driver vector..."):
             universe = get_full_universe()
@@ -1643,33 +1643,6 @@ with tab2:
             use_container_width=True,
             hide_index=True
         )
-
-    # ====================== HISTORICAL BACKTEST ======================
-    st.divider()
-
-    section_header("Historical Backtest", "Re-run ISM scoring against any past report")
-    if report_metadata:
-        historical_dates = sorted(report_metadata.keys(), reverse=True)
-        date_options = [d.strftime('%B %Y') for d in historical_dates]
-        selected_month_str = st.selectbox("Select past ISM report:", options=date_options, index=0)
-        selected_date = next(d for d in historical_dates if d.strftime('%B %Y') == selected_month_str)
-
-        if st.button(f"Re-run Scoring for {selected_month_str}", type="primary", use_container_width=True):
-            with st.spinner(f"Re-calculating for {selected_month_str}..."):
-                hist_meta = report_metadata[selected_date]
-                hist_drivers = calculate_drivers(hist_meta.get("subcomponents", {}))
-                universe = get_full_universe()
-                stocks_df = universe[universe["Type"] == "Stock"].copy()
-                scored_hist = tag_and_score_stocks(stocks_df, hist_drivers) if not stocks_df.empty else pd.DataFrame()
-                st.success(f"Backtest complete for {selected_month_str}")
-                st.dataframe(
-                    scored_hist.head(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "ism_score": st.column_config.ProgressColumn("Signal Strength", format="%.3f", min_value=-1.0, max_value=1.0)
-                    }
-                )
 
     section_header("Historical Backtest", "Re-run ISM scoring against any past report")
     if report_metadata:
