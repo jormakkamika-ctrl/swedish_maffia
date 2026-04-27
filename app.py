@@ -470,18 +470,19 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
     return drivers
 
 def apply_theme_override(ticker_row: pd.Series) -> Dict[str, float] | None:
-    """High-precision thematic override for ETFs like SMH, AIQ, etc."""
+    """High-precision thematic override — exact word match only."""
     name = str(ticker_row.get("Security Name", "")) + " " + str(ticker_row.get("Company", ""))
     name_lower = name.lower()
     for theme, overrides in THEME_OVERRIDES.items():
-        if theme.lower() in name_lower:
+        if theme.lower() in name_lower.split():   # whole-word match only
             return overrides
     return None
 
 
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Investment-grade weighted macro score for ETFs using Sector_Weights."""
-    # 1. Theme override first (highest precision)
+    """Investment-grade weighted macro score for ETFs — now extremely robust with CSV parsing."""
+    
+    # 1. High-precision thematic override (first, highest conviction)
     theme_override = apply_theme_override(ticker_row)
     if theme_override:
         driver_vector = {d: 0.0 for d in DriverName}
@@ -492,25 +493,45 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
         return {
             **{d.value: round(driver_vector[d], 3) for d in DriverName},
             "ism_score": round(ism_score, 3),
-            "conviction": round(ism_score * 0.9, 3),   # higher conviction for themes
+            "conviction": round(ism_score * 0.9, 3),
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Normal sector-weighted scoring
-    try:
-        weights = json.loads(ticker_row["Sector_Weights"])
-        if not weights:
-            raise ValueError
-    except:
-        return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights"}
+    # 2. Robust sector-weighted scoring
+    sector_weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
+    
+    if pd.isna(sector_weights_str) or sector_weights_str == "" or sector_weights_str == "nan" or sector_weights_str == "{}":
+        return {
+            "ism_score": 0.0, 
+            "conviction": 0.0, 
+            "why": "No sector weights data"
+        }
 
+    try:
+        # Fix common CSV escaping issues
+        cleaned = sector_weights_str
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1].replace('""', '"')
+        
+        weights = json.loads(cleaned)
+        if not isinstance(weights, dict) or not weights:
+            raise ValueError("Empty or invalid weights dict")
+    except Exception:
+        return {
+            "ism_score": 0.0, 
+            "conviction": 0.0, 
+            "why": "JSON parse failed"
+        }
+
+    # 3. Normal weighted sector scoring
     driver_vector = {d: 0.0 for d in DriverName}
     for sector_name, weight_pct in weights.items():
-        sector_key = sector_name.strip().title()
+        sector_key = str(sector_name).strip().title()
         sector_exposures = SECTOR_DRIVER_MAPPING.get(sector_key, {})
-        weight = weight_pct / 100.0
+        weight = float(weight_pct) / 100.0
         for driver_name, exposure_coeff in sector_exposures.items():
-            driver_vector[driver_name] += weight * exposure_coeff
+            if driver_name in driver_vector:
+                driver_vector[driver_name] += weight * exposure_coeff
 
     ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
     return {
