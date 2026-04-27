@@ -507,7 +507,7 @@ def safe_parse_sector_weights(sector_weights_str) -> dict:
 
 
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Investment-grade weighted macro score for ETFs."""
+    """Clean, reliable ETF macro scoring after column cleanup."""
     
     # 1. Thematic override (highest precision)
     theme_override = apply_theme_override(ticker_row)
@@ -524,17 +524,19 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Parse sector weights
-    weights = safe_parse_sector_weights(ticker_row.get("Sector_Weights", ""))
+    # 2. Sector weights (now clean)
+    weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
+    if not weights_str or weights_str == "{}":
+        return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
 
-    if not weights:
-        return {
-            "ism_score": 0.0, 
-            "conviction": 0.0, 
-            "why": "No sector weights data"
-        }
+    try:
+        weights = json.loads(weights_str)
+        if not isinstance(weights, dict) or not weights:
+            return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
+    except:
+        return {"ism_score": 0.0, "conviction": 0.0, "why": "JSON parse failed"}
 
-    # 3. Weighted sector scoring
+    # 3. Weighted scoring
     driver_vector = {d: 0.0 for d in DriverName}
     for sector_name, weight_pct in weights.items():
         sector_key = str(sector_name).strip().title()
@@ -1080,7 +1082,7 @@ def parse_ism_subcomponents(text: str) -> dict:
     return sub
 
 # ====================== DATA LOADERS ======================
-@st.cache_data(ttl=86400 * 7, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_full_universe():
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
     try:
@@ -1092,7 +1094,19 @@ def get_full_universe():
         elif "Market Cap" in df.columns:
             df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
         
-        # Ensure all ETF columns exist (safe for old + new CSV)
+        # CRITICAL: Clean Sector_Weights column once at load time
+        if "Sector_Weights" in df.columns:
+            def clean_weights(w):
+                if pd.isna(w) or not str(w).strip():
+                    return ""
+                s = str(w).strip()
+                if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+                    s = s[1:-1]
+                s = s.replace('""', '"')
+                return s
+            df["Sector_Weights"] = df["Sector_Weights"].apply(clean_weights)
+        
+        # Ensure all columns exist
         if "Type" not in df.columns:
             df["Type"] = "Stock"
         if "Category" not in df.columns:
