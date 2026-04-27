@@ -1502,7 +1502,6 @@ with tab1:
         st.plotly_chart(fig_line, use_container_width=True, key="evolution_chart")
 
 # ====================== TAB 2 ======================
-# ====================== TAB 2 ======================
 with tab2:
     drivers = calculate_drivers(subcomponents)
 
@@ -1522,23 +1521,14 @@ with tab2:
         color_continuous_midpoint=0,
     )
     fig_drivers.update_traces(textfont=dict(family="IBM Plex Mono", size=11), textposition="outside")
-    fig_drivers.update_layout(
-        height=320,
-        coloraxis_showscale=False,
-        margin=dict(l=10, r=40, t=20, b=10),
-        **{k: v for k, v in PLOTLY_THEME.items() if k != "xaxis"}
-    )
-    fig_drivers.update_layout(
-        xaxis=dict(range=[-1.1, 1.1], zeroline=True, zerolinecolor="#444c56", zerolinewidth=1,
-                   gridcolor="#21262d", linecolor="#30363d")
-    )
+    fig_drivers.update_layout(height=320, coloraxis_showscale=False, margin=dict(l=10, r=40, t=20, b=10), **{k: v for k, v in PLOTLY_THEME.items() if k != "xaxis"})
+    fig_drivers.update_layout(xaxis=dict(range=[-1.1, 1.1], zeroline=True, zerolinecolor="#444c56", zerolinewidth=1, gridcolor="#21262d", linecolor="#30363d"))
     st.plotly_chart(fig_drivers, use_container_width=True)
 
     st.divider()
 
-    # ====================== TREEMAP (back in original position) ======================
+    # Treemap
     section_header("Sector Signal Treemap", "Tile area = instrument count | Color = avg ISM score")
-
     if "scored_df_tab2" in st.session_state:
         scored_df = st.session_state.scored_df_tab2
         sector_for_treemap = (
@@ -1563,33 +1553,29 @@ with tab2:
 
     section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe ranked by ISM driver alignment")
 
-    # ====================== GENERATE RANKED IDEAS (Tab 2) ======================
+    # ====================== GENERATE RANKED IDEAS ======================
     if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
-        with st.spinner("Scoring full universe (stocks + ETFs) against ISM driver vector..."):
+        with st.spinner("Scoring full universe (stocks + ETFs)..."):
             universe = get_full_universe()
             if universe.empty:
                 st.error("Universe could not be loaded.")
                 st.stop()
 
-            # === Score Stocks ===
+            # Score stocks
             stocks_df = universe[universe["Type"] == "Stock"].copy()
             scored_stocks = tag_and_score_stocks(stocks_df, drivers) if not stocks_df.empty else pd.DataFrame()
 
-            # === Score ETFs ===
+            # Score ETFs
             etfs_df = universe[universe["Type"] == "ETF"].copy()
             scored_etfs = pd.DataFrame()
             if not etfs_df.empty:
                 etf_rows = []
                 for _, row in etfs_df.iterrows():
                     etf_score_data = calculate_etf_macro_score(row, drivers)
-                    etf_rows.append({
-                        **row.to_dict(),
-                        **etf_score_data,
-                        "Type": "ETF"
-                    })
+                    etf_rows.append({**row.to_dict(), **etf_score_data, "Type": "ETF"})
                 scored_etfs = pd.DataFrame(etf_rows)
 
-            # Combine everything
+            # Combine
             scored_df = pd.concat([scored_stocks, scored_etfs], ignore_index=True)
             if not scored_df.empty:
                 scored_df = scored_df.sort_values("conviction", ascending=False).reset_index(drop=True)
@@ -1597,46 +1583,84 @@ with tab2:
             st.session_state.scored_df_tab2 = scored_df
             st.success(f"Scored {len(scored_df):,} instruments ({len(scored_stocks)} stocks + {len(scored_etfs)} ETFs)")
 
-        # ====================== THREE CLEAN COLUMNS ======================
-        col1, col2, col3 = st.columns(3)
+    # ====================== DISPLAY RANKED LISTS + DEEP DIVE ======================
+    if "scored_df_tab2" in st.session_state:
+        scored_df = st.session_state.scored_df_tab2
 
-        with col1:
+        col_left, col_right = st.columns([2, 3])
+
+        with col_left:
+            # Top Long Ideas
             section_header("📈 Top Long Ideas (Stocks)")
-            top_stocks = scored_df[
-                (scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)
-            ].head(15)
-            st.dataframe(
+            top_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)].head(20)
+            selection_long = st.dataframe(
                 top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
             )
 
-        with col2:
+            # Short Candidates
+            st.divider()
             section_header("📉 Short Candidates (Stocks)")
-            short_stocks = scored_df[
-                (scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)
-            ].head(15)
-            st.dataframe(
+            short_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] < -0.05)].head(15)
+            selection_short = st.dataframe(
                 short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
             )
 
-        with col3:
+            # Top ETF Ideas
+            st.divider()
             section_header("🏛 Top ETF Ideas")
-            top_etfs = scored_df[
-                (scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)
-            ].head(12)
+            top_etfs = scored_df[(scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.05)].head(15)
             if top_etfs.empty:
-                st.info("No high-scoring ETFs yet. Run Deep Refresh and try again.")
+                st.info("No high-scoring ETFs yet. Try Deep Refresh.")
             else:
-                st.dataframe(
+                selection_etf = st.dataframe(
                     top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]],
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row"
                 )
 
+        with col_right:
+            section_header("Selected Instrument Analysis")
+            ticker = None
+            ticker_type = None
+
+            if "scored_df_tab2" in st.session_state:
+                if selection_long["selection"]["rows"]:
+                    idx = selection_long["selection"]["rows"][0]
+                    ticker = top_stocks.iloc[idx]["Ticker"]
+                    ticker_type = "Stock"
+                elif selection_short["selection"]["rows"]:
+                    idx = selection_short["selection"]["rows"][0]
+                    ticker = short_stocks.iloc[idx]["Ticker"]
+                    ticker_type = "Stock"
+                elif 'selection_etf' in locals() and selection_etf["selection"]["rows"]:
+                    idx = selection_etf["selection"]["rows"][0]
+                    ticker = top_etfs.iloc[idx]["Ticker"]
+                    ticker_type = "ETF"
+
+            if ticker:
+                if ticker_type == "ETF":
+                    show_etf_deep_dive(ticker)
+                else:
+                    show_stock_deep_dive(ticker)
+            else:
+                st.markdown("""
+                <div style="background: #161b22; border: 1px dashed #30363d; border-radius: 8px; padding: 48px 32px; text-align: center; color: #8b949e; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;">
+                Select any row from the lists on the left<br>to open the professional deep dive panel.
+                </div>
+                """, unsafe_allow_html=True)
+
         st.divider()
+        # Full table (optional)
         st.dataframe(
             scored_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "ism_score", "conviction", "why"]]
             .sort_values("conviction", ascending=False),
@@ -1644,6 +1668,11 @@ with tab2:
             hide_index=True
         )
 
+    else:
+        st.info("Click the button above to generate the ranked universe.")
+
+    # ====================== HISTORICAL BACKTEST ======================
+    st.divider()
     section_header("Historical Backtest", "Re-run ISM scoring against any past report")
     if report_metadata:
         historical_dates = sorted(report_metadata.keys(), reverse=True)
@@ -1663,9 +1692,7 @@ with tab2:
                     scored_hist.head(30)[["Ticker", "Company", "Yahoo Industry", "Market Cap", "ism_score", "why"]],
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "ism_score": st.column_config.ProgressColumn("Signal Strength", format="%.3f", min_value=-1.0, max_value=1.0)
-                    }
+                    column_config={"ism_score": st.column_config.ProgressColumn("Signal Strength", format="%.3f", min_value=-1.0, max_value=1.0)}
                 )
 
 # ====================== SIDEBAR ======================
