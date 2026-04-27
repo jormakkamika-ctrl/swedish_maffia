@@ -332,50 +332,48 @@ PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
     ]
 }
 
-# ====================== ETF → ISM MAPPING (granular where possible) ======================
-ETF_CATEGORY_TO_ISM: Dict[str, str] = {
-    # Sector ETFs (clean 1:1 mapping to your ISM keys)
-    "Technology": "Computer & Electronic Products",
-    "Consumer Defensive": "Food, Beverage & Tobacco Products",
-    "Basic Materials": "Primary Metals",
-    "Energy": "Petroleum & Coal Products",
-    "Industrials": "Machinery",
-    "Health Care": "Miscellaneous Manufacturing",
-    "Financial Services": "Financial Activities",      # new ISM key (you can add it to INDUSTRIES if you want)
-    "Financial": "Financial Activities",
+# ====================== PROFESSIONAL ETF MAPPINGS (Investment-Grade) ======================
 
-    # Broad equity ETFs → catch-all (you can change this later)
-    "Large Blend": "Diversified Equity",
-    "Large Growth": "Diversified Equity",
-    "Large Value": "Diversified Equity",
-    "Mid-Cap Blend": "Diversified Equity",
-    "Mid-Cap Growth": "Diversified Equity",
-    "Mid-Cap Value": "Diversified Equity",
-
-    # Everything else
-    "Intermediate Core Bond": "Fixed Income / Other",
-    "High Yield Bond": "Fixed Income / Other",
+# Tab 1: ISM Industry relevance (1-to-many weighted bridge)
+GICS_TO_ISM_BRIDGE_V2: Dict[str, List[str]] = {
+    "Technology":           ["Computer & Electronic Products"],
+    "Industrials":          ["Machinery", "Fabricated Metal Products", "Transportation Equipment"],
+    "Basic Materials":      ["Primary Metals", "Chemical Products", "Plastics & Rubber Products"],
+    "Consumer Cyclical":    ["Apparel, Leather & Allied Products", "Furniture & Related Products"],
+    "Consumer Defensive":   ["Food, Beverage & Tobacco Products"],
+    "Energy":               ["Petroleum & Coal Products"],
+    "Financial Services":   [],  # not directly ISM-mapped
+    "Communication Services": [],
+    "Real Estate":          [],
+    "Healthcare":           [],
+    "Utilities":            [],
 }
 
-# ====================== GICS SECTOR → ISM INDUSTRY BRIDGE (weighted) ======================
-# ====================== GICS SECTOR → ISM INDUSTRY BRIDGE (Tab 1 only) ======================
-GICS_TO_ISM_BRIDGE: Dict[str, str] = {
-    "Technology": "Computer & Electronic Products",
-    "Industrials": "Machinery",
-    "Materials": "Primary Metals",
-    "Consumer Discretionary": "Apparel, Leather & Allied Products",
-    "Consumer Staples": "Food, Beverage & Tobacco Products",
-    "Energy": "Petroleum & Coal Products",
-    "Health Care": "Miscellaneous Manufacturing",
-    "Financials": "Financial Activities",
-    "Communication Services": "Computer & Electronic Products",
-    "Utilities": "Fixed Income / Other",
-    "Real Estate": "Fixed Income / Other",
-    "Basic Materials": "Primary Metals",
+# Tab 2: Economic Driver sensitivity matrix (sector → drivers)
+SECTOR_DRIVER_MAPPING: Dict[str, Dict[str, float]] = {
+    "Technology":           {"DEMAND_MOMENTUM": 0.85, "CAPEX_PRESSURE": 0.75},
+    "Industrials":          {"CAPEX_PRESSURE": 0.90, "DEMAND_MOMENTUM": 0.75, "LABOR_TIGHTNESS": 0.65},
+    "Basic Materials":      {"INPUT_COST_INFLATION": 0.90, "INVENTORY_RESTOCKING": 0.80},
+    "Consumer Cyclical":    {"DEMAND_MOMENTUM": 0.88, "LABOR_TIGHTNESS": 0.70},
+    "Consumer Defensive":   {"INPUT_COST_INFLATION": 0.55},
+    "Energy":               {"INPUT_COST_INFLATION": 0.85, "CAPEX_PRESSURE": 0.60},
+    "Financial Services":   {"SECTOR_SPECIFIC_STRENGTH": 0.90},
+    "Communication Services": {"DEMAND_MOMENTUM": 0.65},
+    "Real Estate":          {"CAPEX_PRESSURE": 0.55, "DEMAND_MOMENTUM": 0.50},
+    "Healthcare":           {"DEMAND_MOMENTUM": 0.60},
+    "Utilities":            {"INPUT_COST_INFLATION": 0.70},
 }
 
-def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposure: float = 0.25) -> float:
-    """Returns weighted relevance score (0–1) of ETF to a specific ISM industry."""
+# High-conviction thematic overrides (run BEFORE sector weighting)
+THEME_OVERRIDES = {
+    "Semiconductor": {"DEMAND_MOMENTUM": 0.92, "CAPEX_PRESSURE": 0.95},
+    "AI":            {"DEMAND_MOMENTUM": 0.93, "CAPEX_PRESSURE": 0.88},
+    "Clean Energy":  {"CAPEX_PRESSURE": 0.85, "DEMAND_MOMENTUM": 0.78},
+    # Add more as you discover strong thematic ETFs
+}
+
+def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposure: float = 0.20) -> float:
+    """Weighted relevance of ETF to a specific ISM industry using actual sector weights."""
     try:
         weights = json.loads(ticker_row["Sector_Weights"])
         if not weights:
@@ -386,8 +384,10 @@ def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposur
     total_relevance = 0.0
     for sector_name, weight_pct in weights.items():
         sector_key = sector_name.strip().title()
-        if sector_key in GICS_TO_ISM_BRIDGE and GICS_TO_ISM_BRIDGE[sector_key] == target_ism:
-            total_relevance += (weight_pct / 100.0)
+        if sector_key in GICS_TO_ISM_BRIDGE_V2:
+            ism_list = GICS_TO_ISM_BRIDGE_V2[sector_key]
+            if target_ism in ism_list:
+                total_relevance += (weight_pct / 100.0)
 
     return total_relevance if total_relevance >= min_exposure else 0.0
 
@@ -469,6 +469,56 @@ def calculate_drivers(subcomponents: Dict) -> Dict[DriverName, EconomicDriver]:
     )
     return drivers
 
+def apply_theme_override(ticker_row: pd.Series) -> Dict[str, float] | None:
+    """High-precision thematic override for ETFs like SMH, AIQ, etc."""
+    name = str(ticker_row.get("Security Name", "")) + " " + str(ticker_row.get("Company", ""))
+    name_lower = name.lower()
+    for theme, overrides in THEME_OVERRIDES.items():
+        if theme.lower() in name_lower:
+            return overrides
+    return None
+
+
+def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
+    """Investment-grade weighted macro score for ETFs using Sector_Weights."""
+    # 1. Theme override first (highest precision)
+    theme_override = apply_theme_override(ticker_row)
+    if theme_override:
+        driver_vector = {d: 0.0 for d in DriverName}
+        for driver_name, exposure in theme_override.items():
+            if driver_name in driver_vector:
+                driver_vector[driver_name] = exposure
+        ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
+        return {
+            **{d.value: round(driver_vector[d], 3) for d in DriverName},
+            "ism_score": round(ism_score, 3),
+            "conviction": round(ism_score * 0.9, 3),   # higher conviction for themes
+            "why": f"Thematic override: {list(theme_override.keys())[0]}"
+        }
+
+    # 2. Normal sector-weighted scoring
+    try:
+        weights = json.loads(ticker_row["Sector_Weights"])
+        if not weights:
+            raise ValueError
+    except:
+        return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights"}
+
+    driver_vector = {d: 0.0 for d in DriverName}
+    for sector_name, weight_pct in weights.items():
+        sector_key = sector_name.strip().title()
+        sector_exposures = SECTOR_DRIVER_MAPPING.get(sector_key, {})
+        weight = weight_pct / 100.0
+        for driver_name, exposure_coeff in sector_exposures.items():
+            driver_vector[driver_name] += weight * exposure_coeff
+
+    ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
+    return {
+        **{d.value: round(driver_vector[d], 3) for d in DriverName},
+        "ism_score": round(ism_score, 3),
+        "conviction": round(ism_score * 0.8, 3),
+        "why": "Weighted sector exposure"
+    }
 # ====================== PROFESSIONAL ECONOMIC EXPOSURE MAP (Updated with Claude's best ideas) ======================
 INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
     # DEMAND MOMENTUM
@@ -776,52 +826,7 @@ def show_stock_deep_dive(ticker: str):
 
         st.caption(f"ISM Relevance: {ticker} | Industry: {info.get('industry', 'N/A')} | Sector: {info.get('sector', 'N/A')}")
 
-def get_dominant_sector(sector_weights_json: str) -> str:
-    """Helper for Tab 2 scoring"""
-    if not sector_weights_json or pd.isna(sector_weights_json):
-        return ""
-    try:
-        weights = json.loads(sector_weights_json)
-        if weights:
-            return max(weights, key=weights.get)
-    except:
-        pass
-    return ""
-def score_etf_by_drivers(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Weighted scoring using actual sector weights → returns full driver vector + scores"""
-    try:
-        weights = json.loads(ticker_row["Sector_Weights"])
-        if not weights:
-            raise ValueError
-    except:
-        # fallback
-        dominant = get_dominant_sector(ticker_row.get("Sector_Weights", ""))
-        exposures = get_best_exposure(dominant) if dominant else {}
-        score = sum(exposures.get(d, 0.0) * drivers[d].strength for d in DriverName)
-        return {
-            **{d.value: exposures.get(d, 0.0) for d in DriverName},
-            "ism_score": round(score, 3),
-            "conviction": round(score * 0.8, 3),
-            "why": f"Dominant sector: {dominant}" if dominant else "No sector data"
-        }
 
-    # Weighted calculation
-    driver_vector = {d: 0.0 for d in DriverName}
-    for sector_name, weight_pct in weights.items():
-        sector_key = sector_name.lower().replace(" ", "")
-        if sector_key in ETF_SECTOR_DRIVER_MAP:
-            sector_drivers = ETF_SECTOR_DRIVER_MAP[sector_key]
-            for driver, exposure in sector_drivers.items():
-                driver_vector[driver] += (weight_pct / 100.0) * exposure
-
-    # Final scores
-    ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
-    return {
-        **{d.value: round(driver_vector[d], 3) for d in DriverName},
-        "ism_score": round(ism_score, 3),
-        "conviction": round(ism_score * 0.8, 3),   # slightly lower conviction than pure stocks
-        "why": "Weighted sector exposure"
-    }
 def show_etf_deep_dive(ticker: str):
     """Full ETF deep dive: 1Y chart + MACD + metrics + interactive sector pie"""
     if not ticker:
@@ -1523,14 +1528,13 @@ with tab2:
                 stocks_df = universe[universe["Type"] == "Stock"].copy()
                 scored_stocks = tag_and_score_stocks(stocks_df, drivers) if not stocks_df.empty else pd.DataFrame()
 
-                # ETFs (using dominant sector)
-                                # ETFs - weighted sector scoring (new)
+                # ETFs — professional weighted + thematic scoring
                 etfs_df = universe[universe["Type"] == "ETF"].copy()
                 scored_etfs = pd.DataFrame()
                 if not etfs_df.empty:
                     etf_rows = []
                     for _, row in etfs_df.iterrows():
-                        etf_score_data = score_etf_by_drivers(row, drivers)
+                        etf_score_data = calculate_etf_macro_score(row, drivers)
                         etf_rows.append({
                             **row.to_dict(),
                             **etf_score_data,
