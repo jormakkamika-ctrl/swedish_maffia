@@ -507,9 +507,9 @@ def safe_parse_sector_weights(sector_weights_str) -> dict:
 
 
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Clean, reliable ETF macro scoring after column cleanup."""
+    """Clean, reliable ETF scoring after column cleanup."""
     
-    # 1. Thematic override (highest precision)
+    # 1. Thematic override first (highest precision)
     theme_override = apply_theme_override(ticker_row)
     if theme_override:
         driver_vector = {d: 0.0 for d in DriverName}
@@ -524,7 +524,7 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Sector weights (now clean)
+    # 2. Sector weights (now cleaned in get_full_universe)
     weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
     if not weights_str or weights_str == "{}":
         return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
@@ -536,7 +536,7 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
     except:
         return {"ism_score": 0.0, "conviction": 0.0, "why": "JSON parse failed"}
 
-    # 3. Weighted scoring
+    # 3. Weighted scoring using your existing SECTOR_DRIVER_MAPPING
     driver_vector = {d: 0.0 for d in DriverName}
     for sector_name, weight_pct in weights.items():
         sector_key = str(sector_name).strip().title()
@@ -1088,31 +1088,31 @@ def get_full_universe():
     try:
         df = pd.read_csv(csv_url)
         
-        # Standardize size column
+        # Standardize Market Cap
         if "Size" in df.columns:
             df["Market Cap"] = df["Size"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
         elif "Market Cap" in df.columns:
             df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
         
-        # CRITICAL: Clean Sector_Weights column once at load time
+        # === CRITICAL FIX: Clean Sector_Weights once at load time ===
         if "Sector_Weights" in df.columns:
-            def clean_weights(w):
+            def clean_sector_weights(w):
                 if pd.isna(w) or not str(w).strip():
                     return ""
                 s = str(w).strip()
+                # Remove outer quotes pandas adds
                 if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
                     s = s[1:-1]
+                # Fix double-escaped quotes
                 s = s.replace('""', '"')
                 return s
-            df["Sector_Weights"] = df["Sector_Weights"].apply(clean_weights)
+            df["Sector_Weights"] = df["Sector_Weights"].apply(clean_sector_weights)
         
-        # Ensure all columns exist
+        # Ensure required columns exist
         if "Type" not in df.columns:
             df["Type"] = "Stock"
         if "Category" not in df.columns:
             df["Category"] = ""
-        if "Sector_Weights" not in df.columns:
-            df["Sector_Weights"] = ""
             
         return df
     except Exception as e:
