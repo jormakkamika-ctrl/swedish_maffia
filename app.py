@@ -507,9 +507,16 @@ def safe_parse_sector_weights(sector_weights_str) -> dict:
 
 
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Clean, reliable ETF scoring after column cleanup."""
+    """Debug version — shows exactly what the raw data looks like."""
+    ticker = ticker_row.get("Ticker", "Unknown")
     
-    # 1. Thematic override first (highest precision)
+    # === DEBUG PRINTS (visible in app + terminal) ===
+    if ticker in ["VTI", "SPY", "QQQ", "XLK", "IWM"] or "debug_shown" not in st.session_state:
+        st.session_state.debug_shown = True
+        raw = str(ticker_row.get("Sector_Weights", ""))
+        st.info(f"**DEBUG {ticker}** — Raw Sector_Weights: `{raw[:300]}`...")
+
+    # 1. Thematic override
     theme_override = apply_theme_override(ticker_row)
     if theme_override:
         driver_vector = {d: 0.0 for d in DriverName}
@@ -524,7 +531,7 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
             "why": f"Thematic override: {list(theme_override.keys())[0]}"
         }
 
-    # 2. Sector weights (now cleaned in get_full_universe)
+    # 2. Sector weights parsing
     weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
     if not weights_str or weights_str == "{}":
         return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
@@ -533,10 +540,10 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
         weights = json.loads(weights_str)
         if not isinstance(weights, dict) or not weights:
             return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
-    except:
-        return {"ism_score": 0.0, "conviction": 0.0, "why": "JSON parse failed"}
+    except Exception as e:
+        return {"ism_score": 0.0, "conviction": 0.0, "why": f"JSON parse failed: {str(e)[:50]}"}
 
-    # 3. Weighted scoring using your existing SECTOR_DRIVER_MAPPING
+    # 3. Weighted scoring
     driver_vector = {d: 0.0 for d in DriverName}
     for sector_name, weight_pct in weights.items():
         sector_key = str(sector_name).strip().title()
@@ -1082,7 +1089,7 @@ def parse_ism_subcomponents(text: str) -> dict:
     return sub
 
 # ====================== DATA LOADERS ======================
-@st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)  # shorter TTL to force refresh
 def get_full_universe():
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
     try:
@@ -1091,24 +1098,23 @@ def get_full_universe():
         # Standardize Market Cap
         if "Size" in df.columns:
             df["Market Cap"] = df["Size"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
-        elif "Market Cap" in df.columns:
-            df["Market Cap"] = df["Market Cap"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
         
-        # === CRITICAL FIX: Clean Sector_Weights once at load time ===
+        # === VERY AGGRESSIVE Sector_Weights cleaning ===
         if "Sector_Weights" in df.columns:
-            def clean_sector_weights(w):
+            def clean_weights(w):
                 if pd.isna(w) or not str(w).strip():
                     return ""
                 s = str(w).strip()
-                # Remove outer quotes pandas adds
+                # Remove outer quotes
                 if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
                     s = s[1:-1]
-                # Fix double-escaped quotes
+                # Fix doubled quotes
                 s = s.replace('""', '"')
+                # Remove any remaining junk
+                s = s.strip()
                 return s
-            df["Sector_Weights"] = df["Sector_Weights"].apply(clean_sector_weights)
+            df["Sector_Weights"] = df["Sector_Weights"].apply(clean_weights)
         
-        # Ensure required columns exist
         if "Type" not in df.columns:
             df["Type"] = "Stock"
         if "Category" not in df.columns:
