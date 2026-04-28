@@ -1551,7 +1551,7 @@ with tab2:
 
     st.divider()
 
-        section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe ranked by ISM driver alignment")
+section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe ranked by ISM driver alignment")
 
     # ====================== GENERATE RANKED IDEAS ======================
     if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
