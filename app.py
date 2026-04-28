@@ -1587,16 +1587,16 @@ with tab2:
         col_left, col_right = st.columns([2, 3])
 
         with col_left:
-            # Top Long Ideas (Stocks)
+            # Top Long Ideas
             section_header("📈 Top Long Ideas (Stocks)")
             top_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] > 0.05)].head(20)
-            selection_long = st.dataframe(
+            long_sel = st.dataframe(
                 top_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="single-row",
-                key="long_df"
+                key="long_table"
             )
 
             # Short Candidates
@@ -1606,56 +1606,56 @@ with tab2:
             if short_stocks.empty:
                 st.info("No strong short signals in current regime.")
             else:
-                selection_short = st.dataframe(
+                short_sel = st.dataframe(
                     short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
                     selection_mode="single-row",
-                    key="short_df"
+                    key="short_table"
                 )
 
-            # Top ETF Ideas - relaxed + sorted by conviction
+            # Top ETF Ideas
             st.divider()
             section_header("🏛 Top ETF Ideas")
             top_etfs = scored_df[scored_df["Type"] == "ETF"].nlargest(15, "conviction")
             if top_etfs.empty:
-                st.info("No ETFs with sector weights data yet. Run Deep Refresh.")
+                st.info("No ETFs with sector weights data yet.")
             else:
-                selection_etf = st.dataframe(
+                etf_sel = st.dataframe(
                     top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
                     selection_mode="single-row",
-                    key="etf_df"
+                    key="etf_table"
                 )
 
         with col_right:
             section_header("Selected Instrument Analysis")
 
             # Persistent selection handling
-            ticker = None
-            ticker_type = None
+            selected_ticker = None
+            selected_type = None
 
-            if "long_df" in st.session_state and st.session_state.long_df.get("selection", {}).get("rows"):
-                idx = st.session_state.long_df["selection"]["rows"][0]
-                ticker = top_stocks.iloc[idx]["Ticker"]
-                ticker_type = "Stock"
-            elif "short_df" in st.session_state and st.session_state.short_df.get("selection", {}).get("rows"):
-                idx = st.session_state.short_df["selection"]["rows"][0]
-                ticker = short_stocks.iloc[idx]["Ticker"]
-                ticker_type = "Stock"
-            elif "etf_df" in st.session_state and st.session_state.etf_df.get("selection", {}).get("rows"):
-                idx = st.session_state.etf_df["selection"]["rows"][0]
-                ticker = top_etfs.iloc[idx]["Ticker"]
-                ticker_type = "ETF"
+            if long_sel["selection"]["rows"]:
+                idx = long_sel["selection"]["rows"][0]
+                selected_ticker = top_stocks.iloc[idx]["Ticker"]
+                selected_type = "Stock"
+            elif short_stocks is not None and short_sel["selection"]["rows"]:
+                idx = short_sel["selection"]["rows"][0]
+                selected_ticker = short_stocks.iloc[idx]["Ticker"]
+                selected_type = "Stock"
+            elif top_etfs is not None and etf_sel["selection"]["rows"]:
+                idx = etf_sel["selection"]["rows"][0]
+                selected_ticker = top_etfs.iloc[idx]["Ticker"]
+                selected_type = "ETF"
 
-            if ticker:
-                if ticker_type == "ETF":
-                    show_etf_deep_dive(ticker)
+            if selected_ticker:
+                if selected_type == "ETF":
+                    show_etf_deep_dive(selected_ticker)
                 else:
-                    show_stock_deep_dive(ticker)
+                    show_stock_deep_dive(selected_ticker)
             else:
                 st.markdown("""
                 <div style="background: #161b22; border: 1px dashed #30363d; border-radius: 8px; padding: 48px 32px; text-align: center; color: #8b949e; font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;">
