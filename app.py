@@ -1049,7 +1049,7 @@ def show_etf_deep_dive(ticker: str):
             })
             st.dataframe(left, use_container_width=True, hide_index=True)
 
-                with col2:
+        with col2:
             # === Sector allocation pie chart (robust for dict + string) ===
             sector_weights = None
 
