@@ -1583,7 +1583,7 @@ with tab2:
             st.session_state.scored_df_tab2 = scored_df
             st.success(f"Scored {len(scored_df):,} instruments ({len(scored_stocks)} stocks + {len(scored_etfs)} ETFs)")
 
-            # ====================== DISPLAY RANKED LISTS + DEEP DIVE ======================
+                # ====================== DISPLAY RANKED LISTS + DEEP DIVE ======================
         col_left, col_right = st.columns([2, 3])
 
         with col_left:
@@ -1595,54 +1595,59 @@ with tab2:
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
-                selection_mode="single-row"
+                selection_mode="single-row",
+                key="long_df"
             )
 
-            # Short Candidates (Stocks) - relaxed
+            # Short Candidates
             st.divider()
             section_header("📉 Short Candidates (Stocks)")
             short_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] < 0.0)].head(15)
             if short_stocks.empty:
-                st.info("No strong short signals in the current expansionary regime.")
+                st.info("No strong short signals in current regime.")
             else:
                 selection_short = st.dataframe(
                     short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
-                    selection_mode="single-row"
+                    selection_mode="single-row",
+                    key="short_df"
                 )
 
-            # Top ETF Ideas - relaxed
+            # Top ETF Ideas - relaxed + sorted by conviction
             st.divider()
             section_header("🏛 Top ETF Ideas")
-            top_etfs = scored_df[(scored_df["Type"] == "ETF") & (scored_df["ism_score"] > 0.0)].head(15)
+            top_etfs = scored_df[scored_df["Type"] == "ETF"].nlargest(15, "conviction")
             if top_etfs.empty:
-                st.info("No high-scoring ETFs yet. Try Deep Refresh.")
+                st.info("No ETFs with sector weights data yet. Run Deep Refresh.")
             else:
                 selection_etf = st.dataframe(
                     top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
-                    selection_mode="single-row"
+                    selection_mode="single-row",
+                    key="etf_df"
                 )
 
         with col_right:
             section_header("Selected Instrument Analysis")
+
+            # Persistent selection handling
             ticker = None
             ticker_type = None
 
-            if selection_long["selection"]["rows"]:
-                idx = selection_long["selection"]["rows"][0]
+            if "long_df" in st.session_state and st.session_state.long_df.get("selection", {}).get("rows"):
+                idx = st.session_state.long_df["selection"]["rows"][0]
                 ticker = top_stocks.iloc[idx]["Ticker"]
                 ticker_type = "Stock"
-            elif 'selection_short' in locals() and selection_short["selection"]["rows"]:
-                idx = selection_short["selection"]["rows"][0]
+            elif "short_df" in st.session_state and st.session_state.short_df.get("selection", {}).get("rows"):
+                idx = st.session_state.short_df["selection"]["rows"][0]
                 ticker = short_stocks.iloc[idx]["Ticker"]
                 ticker_type = "Stock"
-            elif 'selection_etf' in locals() and selection_etf["selection"]["rows"]:
-                idx = selection_etf["selection"]["rows"][0]
+            elif "etf_df" in st.session_state and st.session_state.etf_df.get("selection", {}).get("rows"):
+                idx = st.session_state.etf_df["selection"]["rows"][0]
                 ticker = top_etfs.iloc[idx]["Ticker"]
                 ticker_type = "ETF"
 
@@ -1659,7 +1664,7 @@ with tab2:
                 """, unsafe_allow_html=True)
 
         st.divider()
-        # Full table at the bottom
+        # Full ranked table at the bottom
         st.dataframe(
             scored_df[["Ticker", "Company", "Type", "Yahoo Industry", "Category", "ism_score", "conviction", "why"]]
             .sort_values("conviction", ascending=False),
