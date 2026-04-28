@@ -1050,52 +1050,74 @@ def show_etf_deep_dive(ticker: str):
             st.dataframe(left, use_container_width=True, hide_index=True)
 
         with col2:
-            # === Sector allocation pie chart (robust for dict + string) ===
+            # === SECTOR ALLOCATION PIE CHART (real holdings, not just Category) ===
             sector_weights = None
+            weights_source = "unknown"
 
-            # 1. Try yfinance first (some ETFs expose clean data)
+            # Priority 1: yfinance detailed sector weightings (most accurate)
             try:
                 if hasattr(t, 'funds_data') and t.funds_data is not None:
                     sw = t.funds_data.sector_weightings
                     if sw is not None and not sw.empty:
-                        sector_weights = {k: round(float(v) * 100, 2) for k, v in sw.to_dict().items()}
+                        sector_weights = {
+                            k: round(float(v) * 100, 2) 
+                            for k, v in sw.to_dict().items() 
+                            if float(v) > 0.001
+                        }
+                        weights_source = "yfinance"
             except:
                 pass
 
-            # 2. Fallback to our pre-cleaned universe data (now a dict!)
-            if sector_weights is None:
-                universe = get_full_universe()
-                row = universe[universe["Ticker"] == ticker]
-                if not row.empty and "Sector_Weights" in row.columns:
-                    weights_data = row["Sector_Weights"].iloc[0]
-                    if isinstance(weights_data, dict) and weights_data:
-                        sector_weights = {k: round(float(v), 2) for k, v in weights_data.items()}
-                    elif isinstance(weights_data, str) and weights_data.strip():
-                        try:
-                            sector_weights = json.loads(weights_data)
-                            sector_weights = {k: round(float(v), 2) for k, v in sector_weights.items()}
-                        except:
-                            pass
+            # Priority 2: Our cleaned Sector_Weights from universe.csv (pre-parsed dict)
+            if not sector_weights:
+                try:
+                    universe = get_full_universe()
+                    row = universe[universe["Ticker"] == ticker]
+                    if not row.empty and "Sector_Weights" in row.columns:
+                        data = row["Sector_Weights"].iloc[0]
+                        if isinstance(data, dict) and data:
+                            sector_weights = {
+                                k: round(float(v), 2) 
+                                for k, v in data.items() 
+                                if float(v) > 0.001
+                            }
+                            weights_source = "universe.csv"
+                        elif isinstance(data, str) and data.strip():
+                            parsed = json.loads(data)
+                            sector_weights = {
+                                k: round(float(v), 2) 
+                                for k, v in parsed.items() 
+                                if float(v) > 0.001
+                            }
+                            weights_source = "universe.csv"
+                except:
+                    pass
 
-            # 3. Render pie chart if we have data
+            # Final fallback (only if nothing else works)
+            if not sector_weights:
+                category = info.get("category") or info.get("Category") or "Unknown"
+                sector_weights = {category: 100.0}
+                weights_source = "category (fallback)"
+
+            # Render pie chart
             if sector_weights and len(sector_weights) > 0:
                 df_w = pd.DataFrame(
                     list(sector_weights.items()), 
-                    columns=["Sector", "%"]
-                ).sort_values("%", ascending=False)
+                    columns=["Sector", "Weight (%)"]
+                ).sort_values("Weight (%)", ascending=False)
                 
                 fig_pie = px.pie(
                     df_w, 
                     names="Sector", 
-                    values="%", 
-                    title="Sector Allocation",
+                    values="Weight (%)", 
+                    title=f"Sector Allocation <span style='font-size:0.75rem; color:#8b949e'>({weights_source})</span>",
                     color_discrete_sequence=px.colors.sequential.Blues_r
                 )
-                fig_pie.update_traces(textinfo="percent+label")
-                fig_pie.update_layout(**PLOTLY_THEME, height=380)
+                fig_pie.update_traces(textinfo="percent+label", textfont_size=13)
+                fig_pie.update_layout(**PLOTLY_THEME, height=380, title_font_size=15)
                 st.plotly_chart(fig_pie, use_container_width=True)
             else:
-                st.info("No sector breakdown available for this ETF.")
+                st.info("No sector allocation data available.")
 
         st.caption(f"ISM Relevance: {info.get('category', 'N/A')} | Type: ETF")
 
