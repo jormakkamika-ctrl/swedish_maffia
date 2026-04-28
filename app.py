@@ -337,34 +337,123 @@ PRIMARY_ISM_MAPPING: Dict[str, List[str]] = {
 
 # Tab 1: ISM Industry relevance (1-to-many weighted bridge)
 GICS_TO_ISM_BRIDGE_V2: Dict[str, List[str]] = {
-    "Technology":           ["Computer & Electronic Products"],
-    "Industrials":          ["Machinery", "Fabricated Metal Products", "Transportation Equipment"],
-    "Basic Materials":      ["Primary Metals", "Chemical Products", "Plastics & Rubber Products"],
-    "Consumer Cyclical":    ["Apparel, Leather & Allied Products", "Furniture & Related Products"],
-    "Consumer Defensive":   ["Food, Beverage & Tobacco Products"],
-    "Energy":               ["Petroleum & Coal Products"],
-    "Financial Services":   [],  # not directly ISM-mapped
-    "Communication Services": [],
-    "Real Estate":          [],
-    "Healthcare":           [],
-    "Utilities":            [],
+    "Technology": [
+        "Computer & Electronic Products",
+        "Electrical Equipment, Appliances & Components",
+        "Machinery",                    # semiconductor equipment, automation
+        "Miscellaneous Manufacturing"   # precision instruments
+    ],
+    "Industrials": [
+        "Machinery",
+        "Fabricated Metal Products",
+        "Transportation Equipment",
+        "Primary Metals",
+        "Nonmetallic Mineral Products",
+        "Electrical Equipment, Appliances & Components"
+    ],
+    "Basic Materials": [   # GICS "Materials"
+        "Primary Metals",
+        "Chemical Products",
+        "Plastics & Rubber Products",
+        "Paper Products",
+        "Wood Products",
+        "Nonmetallic Mineral Products"
+    ],
+    "Consumer Cyclical": [
+        "Furniture & Related Products",
+        "Apparel, Leather & Allied Products",
+        "Wood Products",
+        "Miscellaneous Manufacturing",
+        "Transportation Equipment"      # auto / recreational vehicles
+    ],
+    "Consumer Defensive": [
+        "Food, Beverage & Tobacco Products",
+        "Paper Products",
+        "Printing & Related Support Activities",
+        "Chemical Products"             # food additives, packaging
+    ],
+    "Energy": [
+        "Petroleum & Coal Products",
+        "Chemical Products"             # petrochemicals
+    ],
+    "Financial Services": [],           # no strong direct ISM manufacturing link
+    "Communication Services": [
+        "Computer & Electronic Products"  # comms hardware, networking
+    ],
+    "Real Estate": [
+        "Wood Products",
+        "Nonmetallic Mineral Products",   # construction materials
+        "Primary Metals"
+    ],
+    "Healthcare": [
+        "Chemical Products",              # pharma raw materials
+        "Plastics & Rubber Products",     # medical devices & packaging
+        "Miscellaneous Manufacturing"     # medical instruments & supplies
+    ],
+    "Utilities": [
+        "Electrical Equipment, Appliances & Components",
+        "Primary Metals",                 # transmission infrastructure
+        "Machinery"
+    ],
 }
 
 # Tab 2: Economic Driver sensitivity matrix (sector → drivers)
 SECTOR_DRIVER_MAPPING: Dict[str, Dict[str, float]] = {
-    "Technology":           {"DEMAND_MOMENTUM": 0.85, "CAPEX_PRESSURE": 0.75},
-    "Industrials":          {"CAPEX_PRESSURE": 0.90, "DEMAND_MOMENTUM": 0.75, "LABOR_TIGHTNESS": 0.65},
-    "Basic Materials":      {"INPUT_COST_INFLATION": 0.90, "INVENTORY_RESTOCKING": 0.80},
-    "Consumer Cyclical":    {"DEMAND_MOMENTUM": 0.88, "LABOR_TIGHTNESS": 0.70},
-    "Consumer Defensive":   {"INPUT_COST_INFLATION": 0.55},
-    "Energy":               {"INPUT_COST_INFLATION": 0.85, "CAPEX_PRESSURE": 0.60},
-    "Financial Services":   {"SECTOR_SPECIFIC_STRENGTH": 0.90},
-    "Communication Services": {"DEMAND_MOMENTUM": 0.65},
-    "Real Estate":          {"CAPEX_PRESSURE": 0.55, "DEMAND_MOMENTUM": 0.50},
-    "Healthcare":           {"DEMAND_MOMENTUM": 0.60},
-    "Utilities":            {"INPUT_COST_INFLATION": 0.70},
+    "Technology": {
+        "DEMAND_MOMENTUM": 0.88,
+        "CAPEX_PRESSURE": 0.92,      # heavy fab/capex cycle
+        "LABOR_TIGHTNESS": 0.70
+    },
+    "Industrials": {
+        "CAPEX_PRESSURE": 0.91,
+        "DEMAND_MOMENTUM": 0.78,
+        "LABOR_TIGHTNESS": 0.68,
+        "INVENTORY_RESTOCKING": 0.60
+    },
+    "Basic Materials": {             # Materials
+        "INPUT_COST_INFLATION": 0.93,
+        "INVENTORY_RESTOCKING": 0.85,
+        "DEMAND_MOMENTUM": 0.72
+    },
+    "Consumer Cyclical": {
+        "DEMAND_MOMENTUM": 0.90,
+        "LABOR_TIGHTNESS": 0.72,
+        "INVENTORY_RESTOCKING": 0.65
+    },
+    "Consumer Defensive": {
+        "INPUT_COST_INFLATION": 0.68,
+        "DEMAND_MOMENTUM": 0.45,     # very stable demand
+        "INVENTORY_RESTOCKING": 0.55
+    },
+    "Energy": {
+        "INPUT_COST_INFLATION": 0.88,
+        "CAPEX_PRESSURE": 0.75,
+        "DEMAND_MOMENTUM": 0.60
+    },
+    "Financial Services": {
+        "SECTOR_SPECIFIC_STRENGTH": 0.92,
+        "DEMAND_MOMENTUM": 0.55
+    },
+    "Communication Services": {
+        "DEMAND_MOMENTUM": 0.78,
+        "CAPEX_PRESSURE": 0.65
+    },
+    "Real Estate": {
+        "CAPEX_PRESSURE": 0.68,
+        "DEMAND_MOMENTUM": 0.62,
+        "LABOR_TIGHTNESS": 0.55
+    },
+    "Healthcare": {
+        "DEMAND_MOMENTUM": 0.65,
+        "INPUT_COST_INFLATION": 0.58,
+        "SECTOR_SPECIFIC_STRENGTH": 0.80   # innovation & regulatory
+    },
+    "Utilities": {
+        "INPUT_COST_INFLATION": 0.82,
+        "CAPEX_PRESSURE": 0.70,
+        "DEMAND_MOMENTUM": -0.35           # defensive, rates-sensitive
+    },
 }
-
 # High-conviction thematic overrides (run BEFORE sector weighting)
 THEME_OVERRIDES = {
     "Semiconductor": {"DEMAND_MOMENTUM": 0.92, "CAPEX_PRESSURE": 0.95},
@@ -374,21 +463,18 @@ THEME_OVERRIDES = {
 }
 
 def get_etf_relevance_to_ism(ticker_row: pd.Series, target_ism: str, min_exposure: float = 0.20) -> float:
-    """Weighted relevance of ETF to a specific ISM industry using actual sector weights."""
-    try:
-        weights = json.loads(ticker_row["Sector_Weights"])
-        if not weights:
-            return 0.0
-    except:
+    """Fixed + more accurate relevance using full GICS mapping."""
+    weights = safe_parse_sector_weights(ticker_row.get("Sector_Weights", ""))
+    if not weights:
         return 0.0
 
     total_relevance = 0.0
     for sector_name, weight_pct in weights.items():
-        sector_key = sector_name.strip().title()
+        sector_key = normalize_gics_sector(sector_name)
         if sector_key in GICS_TO_ISM_BRIDGE_V2:
             ism_list = GICS_TO_ISM_BRIDGE_V2[sector_key]
             if target_ism in ism_list:
-                total_relevance += (weight_pct / 100.0)
+                total_relevance += (float(weight_pct) / 100.0)
 
     return total_relevance if total_relevance >= min_exposure else 0.0
 
@@ -506,16 +592,61 @@ def safe_parse_sector_weights(sector_weights_str) -> dict:
             return {}
 
 
+def safe_parse_sector_weights(sector_weights_str) -> dict:
+    """Production-grade parser (already in your code — now we actually use it)."""
+    if pd.isna(sector_weights_str) or not str(sector_weights_str).strip():
+        return {}
+    s = str(sector_weights_str).strip()
+    # Remove outer quotes pandas sometimes adds
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1]
+    s = s.replace('""', '"').strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        try:
+            import ast
+            parsed = ast.literal_eval(s)
+            return parsed if isinstance(parsed, dict) else {}
+        except:
+            return {}
+
+
+def normalize_gics_sector(name: str) -> str:
+    """Robust GICS → your mapping key converter."""
+    if not name:
+        return ""
+    name = str(name).strip().title()
+    # Full GICS → shortened mapping
+    mapping = {
+        "Information Technology": "Technology",
+        "Consumer Discretionary": "Consumer Cyclical",
+        "Consumer Staples": "Consumer Defensive",
+        "Communication Services": "Communication Services",
+        "Financials": "Financial Services",
+        "Health Care": "Healthcare",
+        "Materials": "Basic Materials",
+        "Industrials": "Industrials",
+        "Real Estate": "Real Estate",
+        "Utilities": "Utilities",
+        "Energy": "Energy",
+    }
+    return mapping.get(name, name)
+
+
 def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, EconomicDriver]) -> dict:
-    """Clean, final version — uses your existing SECTOR_DRIVER_MAPPING."""
-    
-    # 1. Thematic override (highest precision)
+    """Fixed, robust, fund-manager grade ETF driver scoring."""
+    # 1. Thematic override (highest priority)
     theme_override = apply_theme_override(ticker_row)
     if theme_override:
         driver_vector = {d: 0.0 for d in DriverName}
         for driver_name, exposure in theme_override.items():
-            if driver_name in driver_vector:
-                driver_vector[driver_name] = exposure
+            if isinstance(driver_name, str):
+                driver_enum = getattr(DriverName, driver_name, None)
+            else:
+                driver_enum = driver_name
+            if driver_enum in driver_vector:
+                driver_vector[driver_enum] = exposure
         ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
         return {
             **{d.value: round(driver_vector[d], 3) for d in DriverName},
@@ -525,32 +656,27 @@ def calculate_etf_macro_score(ticker_row: pd.Series, drivers: Dict[DriverName, E
         }
 
     # 2. Sector-weighted scoring
-    weights_str = str(ticker_row.get("Sector_Weights", "")).strip()
-    if not weights_str or weights_str == "{}":
-        return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
-
-    try:
-        weights = json.loads(weights_str)
-        if not isinstance(weights, dict) or not weights:
-            return {"ism_score": 0.0, "conviction": 0.0, "why": "No sector weights data"}
-    except:
-        return {"ism_score": 0.0, "conviction": 0.0, "why": "JSON parse failed"}
+    weights = safe_parse_sector_weights(ticker_row.get("Sector_Weights", ""))
+    if not weights:
+        return {"ism_score": 0.0, "conviction": 0.0, "why": "No valid sector weights"}
 
     driver_vector = {d: 0.0 for d in DriverName}
-    for sector_name, weight_pct in weights.items():
-        sector_key = str(sector_name).strip().title()
+    for raw_sector, weight_pct in weights.items():
+        sector_key = normalize_gics_sector(raw_sector)
         sector_exposures = SECTOR_DRIVER_MAPPING.get(sector_key, {})
         weight = float(weight_pct) / 100.0
-        for driver_name, exposure_coeff in sector_exposures.items():
-            if driver_name in driver_vector:
-                driver_vector[driver_name] += weight * exposure_coeff
+        for driver_name_str, exposure_coeff in sector_exposures.items():
+            # Convert string key to enum
+            driver_enum = getattr(DriverName, driver_name_str, None)
+            if driver_enum in driver_vector:
+                driver_vector[driver_enum] += weight * exposure_coeff
 
     ism_score = sum(driver_vector[d] * drivers[d].strength for d in DriverName)
     return {
         **{d.value: round(driver_vector[d], 3) for d in DriverName},
         "ism_score": round(ism_score, 3),
         "conviction": round(ism_score * 0.8, 3),
-        "why": "Weighted sector exposure"
+        "why": "Weighted sector + driver exposure"
     }
 # ====================== PROFESSIONAL ECONOMIC EXPOSURE MAP (Updated with Claude's best ideas) ======================
 INDUSTRY_EXPOSURE_MAP: Dict[str, Dict[DriverName, float]] = {
@@ -1086,7 +1212,7 @@ def get_full_universe():
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
     try:
         df = pd.read_csv(csv_url)
-        
+    df["Sector_Weights"] = df["Sector_Weights"].apply(safe_parse_sector_weights)    
         # Standardize Market Cap
         if "Size" in df.columns:
             df["Market Cap"] = df["Size"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
