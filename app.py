@@ -1207,38 +1207,40 @@ def parse_ism_subcomponents(text: str) -> dict:
     return sub
 
 # ====================== DATA LOADERS ======================
-@st.cache_data(ttl=3600, show_spinner=False)  # shorter TTL to force refresh
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_full_universe():
+    """Load the full universe (stocks + ETFs) with robust pre-cleaning."""
     csv_url = "https://raw.githubusercontent.com/jormakkamika-ctrl/swedish_maffia/main/universe.csv"
+    
     try:
         df = pd.read_csv(csv_url)
-    df["Sector_Weights"] = df["Sector_Weights"].apply(safe_parse_sector_weights)    
+        
+        # === CRITICAL: Pre-clean Sector_Weights right after loading ===
+        # This fixes the ETF scoring issue once and for all
+        if "Sector_Weights" in df.columns:
+            df["Sector_Weights"] = df["Sector_Weights"].apply(safe_parse_sector_weights)
+        
         # Standardize Market Cap
         if "Size" in df.columns:
-            df["Market Cap"] = df["Size"].apply(lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) else "N/A")
+            df["Market Cap"] = df["Size"].apply(
+                lambda x: f"${float(x)/1_000_000_000:.1f}B" if pd.notna(x) and x > 0 else "N/A"
+            )
         
-        # === VERY AGGRESSIVE Sector_Weights cleaning ===
-        if "Sector_Weights" in df.columns:
-            def clean_weights(w):
-                if pd.isna(w) or not str(w).strip():
-                    return ""
-                s = str(w).strip()
-                # Remove outer quotes
-                if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
-                    s = s[1:-1]
-                # Fix doubled quotes
-                s = s.replace('""', '"')
-                # Remove any remaining junk
-                s = s.strip()
-                return s
-            df["Sector_Weights"] = df["Sector_Weights"].apply(clean_weights)
-        
+        # Ensure required columns exist (defensive)
         if "Type" not in df.columns:
             df["Type"] = "Stock"
         if "Category" not in df.columns:
             df["Category"] = ""
-            
+        
+        # Optional: clean up any remaining NaNs
+        df = df.fillna({
+            "Market Cap": "N/A",
+            "Yahoo Industry": "",
+            "Company": "Unknown"
+        })
+        
         return df
+        
     except Exception as e:
         st.error(f"Could not load universe: {e}")
         return pd.DataFrame()
