@@ -1551,7 +1551,7 @@ with tab2:
 
     st.divider()
 
-    section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe ranked by ISM driver alignment")
+        section_header("ISM-Leveraged Stock & ETF Ideas", "Full universe ranked by ISM driver alignment")
 
     # ====================== GENERATE RANKED IDEAS ======================
     if st.button("Generate Ranked Ideas (Full Universe Scoring)", type="primary", use_container_width=True):
@@ -1583,7 +1583,10 @@ with tab2:
             st.session_state.scored_df_tab2 = scored_df
             st.success(f"Scored {len(scored_df):,} instruments ({len(scored_stocks)} stocks + {len(scored_etfs)} ETFs)")
 
-                # ====================== DISPLAY RANKED LISTS + DEEP DIVE ======================
+    # ====================== DISPLAY RANKED LISTS + DEEP DIVE ======================
+    if "scored_df_tab2" in st.session_state:
+        scored_df = st.session_state.scored_df_tab2
+
         col_left, col_right = st.columns([2, 3])
 
         with col_left:
@@ -1605,6 +1608,7 @@ with tab2:
             short_stocks = scored_df[(scored_df["Type"] == "Stock") & (scored_df["ism_score"] < 0.0)].head(15)
             if short_stocks.empty:
                 st.info("No strong short signals in current regime.")
+                short_sel = {"selection": {"rows": []}}
             else:
                 short_sel = st.dataframe(
                     short_stocks[["Ticker", "Company", "ism_score", "conviction", "why"]],
@@ -1621,6 +1625,7 @@ with tab2:
             top_etfs = scored_df[scored_df["Type"] == "ETF"].nlargest(15, "conviction")
             if top_etfs.empty:
                 st.info("No ETFs with sector weights data yet.")
+                etf_sel = {"selection": {"rows": []}}
             else:
                 etf_sel = st.dataframe(
                     top_etfs[["Ticker", "Company", "ism_score", "conviction", "why"]],
@@ -1634,19 +1639,19 @@ with tab2:
         with col_right:
             section_header("Selected Instrument Analysis")
 
-            # Persistent selection handling
             selected_ticker = None
             selected_type = None
 
-            if long_sel["selection"]["rows"]:
+            # Clean selection priority (long → short → etf)
+            if long_sel.get("selection", {}).get("rows"):
                 idx = long_sel["selection"]["rows"][0]
                 selected_ticker = top_stocks.iloc[idx]["Ticker"]
                 selected_type = "Stock"
-            elif short_stocks is not None and short_sel["selection"]["rows"]:
+            elif short_sel.get("selection", {}).get("rows"):
                 idx = short_sel["selection"]["rows"][0]
                 selected_ticker = short_stocks.iloc[idx]["Ticker"]
                 selected_type = "Stock"
-            elif top_etfs is not None and etf_sel["selection"]["rows"]:
+            elif etf_sel.get("selection", {}).get("rows"):
                 idx = etf_sel["selection"]["rows"][0]
                 selected_ticker = top_etfs.iloc[idx]["Ticker"]
                 selected_type = "ETF"
